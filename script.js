@@ -26,7 +26,7 @@ if (gradingRoot) {
       paper: null,
       answer: null,
     },
-    pairs: [],
+    history: [],
   };
 
   const elements = {
@@ -42,10 +42,11 @@ if (gradingRoot) {
     answerCropState: document.querySelector("#answerCropState"),
     savePairButton: document.querySelector("#savePairButton"),
     clearCropButton: document.querySelector("#clearCropButton"),
-    pairList: document.querySelector("#pairList"),
-    pairCount: document.querySelector("#pairCount"),
     historyList: document.querySelector("#historyList"),
     clearHistoryButton: document.querySelector("#clearHistoryButton"),
+    historyModal: document.querySelector("#historyModal"),
+    historyModalTime: document.querySelector("#historyModalTime"),
+    historyModalBody: document.querySelector("#historyModalBody"),
   };
 
   const escapeHtml = (value) =>
@@ -118,7 +119,6 @@ if (gradingRoot) {
       }),
     });
 
-    renderHistory();
     return payload.upload;
   };
 
@@ -139,12 +139,6 @@ if (gradingRoot) {
     return payload.upload;
   };
 
-  const fetchPairs = async () => {
-    const payload = await apiRequest("/api/pairs");
-    state.pairs = payload.pairs || [];
-    renderPairs();
-  };
-
   const savePairToDatabase = async (pair) => {
     const payload = await apiRequest("/api/pairs", {
       method: "POST",
@@ -157,14 +151,34 @@ if (gradingRoot) {
     return payload.pair;
   };
 
-  const toHistoryItem = (upload) => {
-    const createdAt = upload.createdAt ? new Date(upload.createdAt) : null;
+  const toHistoryItem = (item) => {
+    const createdAt = item.createdAt ? new Date(item.createdAt) : null;
+    const score = item.score ?? "-";
+    const maxScore = item.maxScore ?? "-";
+    const deductions = Array.isArray(item.deductions) ? item.deductions : [];
+    const suggestions = Array.isArray(item.suggestions) ? item.suggestions : [];
+    const reviewParts = [
+      item.analysis || "",
+      deductions.length ? `扣分点：${deductions.join("；")}` : "",
+      suggestions.length ? `建议：${suggestions.join("；")}` : "",
+    ].filter(Boolean);
 
     return {
-      id: upload.id,
-      name: upload.name,
-      time: createdAt && !Number.isNaN(createdAt.getTime()) ? formatTime(createdAt) : upload.time,
-      image: upload.image,
+      id: item.id,
+      questionName: item.questionName || "未命名题目",
+      answerName: item.answerName || "未命名作答",
+      questionImage: item.questionImage || "",
+      answerImage: item.answerImage || "",
+      scoreText: `${score} / ${maxScore}`,
+      level: item.level || "AI评分",
+      analysis: item.analysis || "",
+      deductions,
+      suggestions,
+      rubric: item.rubric || "",
+      rawContent: item.rawContent || "",
+      model: item.model || "",
+      review: reviewParts.join("\n") || item.rawContent || "暂无点评。",
+      time: createdAt && !Number.isNaN(createdAt.getTime()) ? formatTime(createdAt) : "",
     };
   };
 
@@ -388,38 +402,13 @@ if (gradingRoot) {
     }
   };
 
-  const renderPairs = () => {
-    elements.pairCount.textContent = `${state.pairs.length} 组`;
-
-    if (state.pairs.length === 0) {
-      elements.pairList.innerHTML = '<p class="empty-text">暂无对应关系</p>';
-      return;
-    }
-
-    elements.pairList.innerHTML = state.pairs
-      .map(
-        (pair, index) => `
-          <article class="pair-item">
-            <div class="pair-preview">
-              <img src="${pair.paperCrop}" alt="题目裁剪预览 ${index + 1}" />
-              <span>题目区域 ${index + 1}</span>
-            </div>
-            <div class="pair-preview">
-              <img src="${pair.answerCrop}" alt="答案裁剪预览 ${index + 1}" />
-              <span>答案区域 ${index + 1}</span>
-            </div>
-          </article>
-        `
-      )
-      .join("");
-  };
-
   const renderHistory = async () => {
     let history = [];
 
     try {
-      const payload = await apiRequest("/api/uploads?kind=paper");
-      history = (payload.uploads || []).map(toHistoryItem);
+      const payload = await apiRequest("/api/ai-grade-history");
+      history = (payload.history || []).map(toHistoryItem);
+      state.history = history;
     } catch (error) {
       elements.historyList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
       return;
@@ -433,20 +422,108 @@ if (gradingRoot) {
     elements.historyList.innerHTML = history
       .map(
         (item) => `
-          <article class="history-item">
-            <img src="${item.src}" alt="${escapeHtml(item.name)}" />
+          <article class="history-item ai-history-summary">
             <div>
-              <strong>${escapeHtml(item.name)}</strong>
-              <span>${escapeHtml(item.time)}</span>
+              <div class="history-title-row">
+                <strong>${escapeHtml(item.scoreText)}</strong>
+                <span>${escapeHtml(item.time)}</span>
+              </div>
+              <p>${escapeHtml(item.questionName)}</p>
+              <small>${escapeHtml(item.answerName)} · ${escapeHtml(item.level)}</small>
             </div>
+            <button class="ghost-button history-detail-button" type="button" data-history-id="${escapeHtml(item.id)}">查看详情</button>
           </article>
         `
       )
       .join("");
   };
 
+  const renderList = (items, emptyText) =>
+    items.length ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p>${escapeHtml(emptyText)}</p>`;
+
+  const renderModalImage = (src, label, name) =>
+    src
+      ? `<img src="${src}" alt="${escapeHtml(name)}" />`
+      : `<div class="history-modal-image-empty">${escapeHtml(label)}</div>`;
+
+  const closeHistoryModal = () => {
+    elements.historyModal?.classList.remove("is-open");
+    elements.historyModal?.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("has-history-modal");
+  };
+
+  const openHistoryModal = (historyId) => {
+    const item = state.history.find((historyItem) => historyItem.id === historyId);
+
+    if (!item || !elements.historyModal || !elements.historyModalBody) {
+      return;
+    }
+
+    elements.historyModalTime.textContent = item.time || item.model || "";
+    elements.historyModalBody.innerHTML = `
+      <section class="history-modal-score">
+        <span>AI评分</span>
+        <strong>${escapeHtml(item.scoreText)}</strong>
+        <small>${escapeHtml(item.level)}</small>
+      </section>
+      <section class="history-modal-images">
+        <article>
+          <h3>原题目</h3>
+          ${renderModalImage(item.questionImage, "原题目", item.questionName)}
+          <p>${escapeHtml(item.questionName)}</p>
+        </article>
+        <article>
+          <h3>学生作答</h3>
+          ${renderModalImage(item.answerImage, "学生作答", item.answerName)}
+          <p>${escapeHtml(item.answerName)}</p>
+        </article>
+      </section>
+      <section class="history-modal-section">
+        <h3>相关点评</h3>
+        <p>${escapeHtml(item.analysis || item.rawContent || "暂无点评。")}</p>
+      </section>
+      <section class="history-modal-section">
+        <h3>扣分点</h3>
+        ${renderList(item.deductions, "暂无明确扣分点。")}
+      </section>
+      <section class="history-modal-section">
+        <h3>改进建议</h3>
+        ${renderList(item.suggestions, "暂无建议。")}
+      </section>
+      ${
+        item.rubric
+          ? `<section class="history-modal-section"><h3>评分标准</h3><p>${escapeHtml(item.rubric)}</p></section>`
+          : ""
+      }
+    `;
+
+    elements.historyModal.classList.add("is-open");
+    elements.historyModal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("has-history-modal");
+  };
+
   elements.paperUpload.addEventListener("change", (event) => handleUpload(event, "paper"));
   elements.answerUpload.addEventListener("change", (event) => handleUpload(event, "answer"));
+
+  elements.historyList.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-history-id]");
+
+    if (button) {
+      openHistoryModal(button.dataset.historyId);
+    }
+  });
+
+  elements.historyModal?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-close-history-modal]")) {
+      closeHistoryModal();
+    }
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.historyModal?.classList.contains("is-open")) {
+      closeHistoryModal();
+    }
+  });
 
   elements.clearCropButton.addEventListener("click", () => {
     clearSelection("paper");
@@ -473,18 +550,22 @@ if (gradingRoot) {
 
     try {
       await savePairToDatabase(pair);
-      await fetchPairs();
       clearSelection("paper");
       clearSelection("answer");
     } catch (error) {
-      elements.pairList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
+      elements.savePairButton.textContent = "保存失败";
+      elements.savePairButton.title = error.message || "保存对应关系失败。";
+      window.setTimeout(() => {
+        elements.savePairButton.textContent = "保存对应关系";
+        elements.savePairButton.title = "";
+      }, 2400);
       updatePairButton();
     }
   });
 
   elements.clearHistoryButton.addEventListener("click", async () => {
     try {
-      await apiRequest("/api/uploads?kind=paper", { method: "DELETE" });
+      await apiRequest("/api/ai-grade-history", { method: "DELETE" });
       renderHistory();
     } catch (error) {
       elements.historyList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
@@ -498,9 +579,6 @@ if (gradingRoot) {
 
   setupCropStage(elements.paperStage, "paper");
   setupCropStage(elements.answerStage, "answer");
-  fetchPairs().catch((error) => {
-    elements.pairList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
-  });
   renderHistory();
 }
 
@@ -827,8 +905,11 @@ if (aiReviewRoot) {
       body: JSON.stringify({
         questionImage: question.src,
         questionName: question.name,
+        questionImageId: question.uploadId || question.id || null,
+        questionKind: state.mode === "paper" ? "paper" : "single_question",
         answerImage: answer.src,
         answerName: answer.name,
+        answerImageId: answer.uploadId || null,
         maxScore,
         rubric,
       }),
@@ -842,7 +923,7 @@ if (aiReviewRoot) {
     }
 
     const content = payload?.rawContent || "";
-    return { parsed: payload?.result || parseAiResult(content), raw: content };
+    return { parsed: payload?.result || parseAiResult(content), raw: content, historyError: payload?.historyError || "" };
   };
 
   elements.segmentButtons.forEach((button) => {
@@ -868,7 +949,7 @@ if (aiReviewRoot) {
     try {
       const result = await requestAiGrade();
       renderAiResult(result.parsed, result.raw);
-      elements.aiStatusText.textContent = "评分完成";
+      elements.aiStatusText.textContent = result.historyError ? "评分完成，历史保存失败" : "评分完成，已保存历史";
     } catch (error) {
       elements.aiResult.innerHTML = `
         <article class="ai-result-card is-error">

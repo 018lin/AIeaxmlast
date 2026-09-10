@@ -74,6 +74,15 @@ function mapUpload(row) {
   };
 }
 
+function asJsonArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function getNumericValue(value) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : null;
+}
+
 async function createUpload({ kind, name, image }) {
   const { mimeType, buffer } = parseDataUrl(image);
   const result = await getPool().query(
@@ -109,6 +118,21 @@ async function listUploads(kind) {
   );
 
   return result.rows.map(mapUpload);
+}
+
+async function createImageUpload(client, { kind, name, image }) {
+  const parsedImage = parseDataUrl(image);
+  const id = randomUUID();
+
+  await client.query(
+    `
+      INSERT INTO uploaded_images (id, kind, original_name, mime_type, image_data)
+      VALUES ($1, $2, $3, $4, $5)
+    `,
+    [id, kind, name || "未命名图片", parsedImage.mimeType, parsedImage.buffer]
+  );
+
+  return id;
 }
 
 async function deleteUploads(kind) {
@@ -214,11 +238,159 @@ async function listPairs() {
   }));
 }
 
+async function createAiGradingHistory(payload) {
+  const client = await getPool().connect();
+  const result = payload.result && typeof payload.result === "object" ? payload.result : {};
+
+  try {
+    await client.query("BEGIN");
+
+    const questionImageId =
+      payload.questionImageId ||
+      (payload.questionImage
+        ? await createImageUpload(client, {
+            kind: payload.questionKind === "paper" ? "paper" : "single_question",
+            name: payload.questionName || "未命名题目",
+            image: payload.questionImage,
+          })
+        : null);
+    const answerImageId =
+      payload.answerImageId ||
+      (payload.answerImage
+        ? await createImageUpload(client, {
+            kind: "student_answer",
+            name: payload.answerName || "未命名作答",
+            image: payload.answerImage,
+          })
+        : null);
+
+    const insertResult = await client.query(
+      `
+        INSERT INTO ai_grading_history (
+          id,
+          question_image_id,
+          answer_image_id,
+          question_name,
+          answer_name,
+          max_score,
+          rubric,
+          model,
+          score,
+          level,
+          analysis,
+          deductions,
+          suggestions,
+          raw_content,
+          ai_result
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12::jsonb,
+          $13::jsonb,
+          $14,
+          $15::jsonb
+        )
+        RETURNING id
+      `,
+      [
+        randomUUID(),
+        questionImageId,
+        answerImageId,
+        payload.questionName || "未命名题目",
+        payload.answerName || "未命名作答",
+        getNumericValue(result.max_score ?? payload.maxScore) ?? Number(payload.maxScore),
+        payload.rubric || "",
+        payload.model || "",
+        getNumericValue(result.score),
+        result.level || "",
+        result.analysis || "",
+        JSON.stringify(asJsonArray(result.deductions)),
+        JSON.stringify(asJsonArray(result.suggestions)),
+        payload.rawContent || "",
+        Object.keys(result).length ? JSON.stringify(result) : null,
+      ]
+    );
+
+    await client.query("COMMIT");
+    return insertResult.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function listAiGradingHistory() {
+  const result = await getPool().query(`
+    SELECT
+      h.id,
+      h.question_name,
+      h.answer_name,
+      h.max_score,
+      h.rubric,
+      h.model,
+      h.score,
+      h.level,
+      h.analysis,
+      h.deductions,
+      h.suggestions,
+      h.raw_content,
+      h.ai_result,
+      h.created_at,
+      qi.mime_type AS question_mime_type,
+      encode(qi.image_data, 'base64') AS question_base64,
+      ai.mime_type AS answer_mime_type,
+      encode(ai.image_data, 'base64') AS answer_base64
+    FROM ai_grading_history h
+    LEFT JOIN uploaded_images qi ON qi.id = h.question_image_id
+    LEFT JOIN uploaded_images ai ON ai.id = h.answer_image_id
+    ORDER BY h.created_at DESC
+    LIMIT 100
+  `);
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    questionName: row.question_name,
+    answerName: row.answer_name,
+    questionImage: row.question_base64 ? `data:${row.question_mime_type};base64,${row.question_base64}` : "",
+    answerImage: row.answer_base64 ? `data:${row.answer_mime_type};base64,${row.answer_base64}` : "",
+    maxScore: row.max_score === null ? null : Number(row.max_score),
+    rubric: row.rubric,
+    model: row.model,
+    score: row.score === null ? null : Number(row.score),
+    level: row.level,
+    analysis: row.analysis,
+    deductions: row.deductions,
+    suggestions: row.suggestions,
+    rawContent: row.raw_content,
+    result: row.ai_result,
+    createdAt: row.created_at,
+  }));
+}
+
+async function deleteAiGradingHistory() {
+  await getPool().query("DELETE FROM ai_grading_history");
+}
+
 module.exports = {
+  createAiGradingHistory,
   createPair,
   createUpload,
+  deleteAiGradingHistory,
   deleteUploads,
   initDatabase,
+  listAiGradingHistory,
   listPairs,
   listUploads,
 };

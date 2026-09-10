@@ -204,10 +204,35 @@ async function handleAiGrade(request, response) {
     }
 
     const rawContent = deepseekPayload?.choices?.[0]?.message?.content || "";
+    const result = parseAiResult(rawContent);
+    let history = null;
+    let historyError = "";
+
+    try {
+      history = await db.createAiGradingHistory({
+        questionImageId: payload.questionImageId,
+        answerImageId: payload.answerImageId,
+        questionKind: payload.questionKind,
+        questionImage: payload.questionImage,
+        questionName: payload.questionName,
+        answerImage: payload.answerImage,
+        answerName: payload.answerName,
+        maxScore,
+        rubric,
+        model: DEEPSEEK_MODEL,
+        result,
+        rawContent,
+      });
+    } catch (error) {
+      historyError = error.message || "AI 阅卷历史保存失败。";
+    }
+
     sendJson(response, 200, {
       model: DEEPSEEK_MODEL,
-      result: parseAiResult(rawContent),
+      result,
       rawContent,
+      history,
+      historyError,
     });
   } catch (error) {
     const isTimeout = error.name === "AbortError";
@@ -316,6 +341,24 @@ async function handleListPairs(request, response) {
   }
 }
 
+async function handleListAiGradeHistory(request, response) {
+  try {
+    const history = await db.listAiGradingHistory();
+    sendJson(response, 200, { history });
+  } catch (error) {
+    sendServiceError(response, error);
+  }
+}
+
+async function handleDeleteAiGradeHistory(request, response) {
+  try {
+    await db.deleteAiGradingHistory();
+    sendJson(response, 200, { ok: true });
+  } catch (error) {
+    sendServiceError(response, error);
+  }
+}
+
 function serveStatic(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
@@ -347,6 +390,16 @@ function serveStatic(request, response) {
 const server = http.createServer((request, response) => {
   if (request.method === "POST" && request.url?.startsWith("/api/ai-grade")) {
     handleAiGrade(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && request.url?.startsWith("/api/ai-grade-history")) {
+    handleListAiGradeHistory(request, response);
+    return;
+  }
+
+  if (request.method === "DELETE" && request.url?.startsWith("/api/ai-grade-history")) {
+    handleDeleteAiGradeHistory(request, response);
     return;
   }
 

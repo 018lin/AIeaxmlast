@@ -114,23 +114,13 @@
               <button class="primary-button" id="savePairButton" type="button" disabled>保存对应关系</button>
             </div>
           </section>
-
-          <section class="pair-list-panel" aria-label="已保存对应关系">
-            <header>
-              <h2>已保存对应关系</h2>
-              <span id="pairCount">0 组</span>
-            </header>
-            <div class="pair-list" id="pairList">
-              <p class="empty-text">暂无对应关系</p>
-            </div>
-          </section>
         </div>
 
         <aside class="history-panel" aria-label="阅卷历史">
           <header>
             <div>
               <h2>阅卷历史</h2>
-              <p>上传过的试卷图片会保存在这里。</p>
+              <p>AI 阅卷完成后会保存题目、作答、评分和点评。</p>
             </div>
             <button class="text-button" id="clearHistoryButton" type="button">清空</button>
           </header>
@@ -139,6 +129,24 @@
           </div>
         </aside>
       </section>
+
+      <div class="history-modal" id="historyModal" aria-hidden="true">
+        <div class="history-modal-backdrop" data-close-history-modal></div>
+        <section class="history-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="historyModalTitle">
+          <header>
+            <div>
+              <h2 id="historyModalTitle">阅卷详情</h2>
+              <p id="historyModalTime"></p>
+            </div>
+            <button class="history-modal-close" type="button" aria-label="关闭阅卷详情" data-close-history-modal>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </header>
+          <div class="history-modal-body" id="historyModalBody"></div>
+        </section>
+      </div>
     </main>
 
     <script src="./script.js"></script>

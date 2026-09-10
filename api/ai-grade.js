@@ -1,4 +1,4 @@
-const { readJsonBody, sendJson } = require("../lib/api-shared");
+const { db, ensureDatabase, readJsonBody, sendJson } = require("../lib/api-shared");
 
 const DEEPSEEK_ENDPOINT = process.env.DEEPSEEK_ENDPOINT || "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-flash";
@@ -116,10 +116,36 @@ module.exports = async function handler(request, response) {
     }
 
     const rawContent = deepseekPayload?.choices?.[0]?.message?.content || "";
+    const result = parseAiResult(rawContent);
+    let history = null;
+    let historyError = "";
+
+    try {
+      await ensureDatabase();
+      history = await db.createAiGradingHistory({
+        questionImageId: payload.questionImageId,
+        answerImageId: payload.answerImageId,
+        questionKind: payload.questionKind,
+        questionImage: payload.questionImage,
+        questionName: payload.questionName,
+        answerImage: payload.answerImage,
+        answerName: payload.answerName,
+        maxScore,
+        rubric,
+        model: DEEPSEEK_MODEL,
+        result,
+        rawContent,
+      });
+    } catch (error) {
+      historyError = error.message || "AI 阅卷历史保存失败。";
+    }
+
     sendJson(response, 200, {
       model: DEEPSEEK_MODEL,
-      result: parseAiResult(rawContent),
+      result,
       rawContent,
+      history,
+      historyError,
     });
   } catch (error) {
     const isTimeout = error.name === "AbortError";
