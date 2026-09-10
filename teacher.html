@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>教师控制台 - AI数智作业平台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="console-shell" aria-labelledby="console-title">
+      <header class="console-topbar">
+        <a class="console-brand" href="./index.html" aria-label="返回身份选择">
+          <span class="logo-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
+              <path d="M7.2 9.3h3.2M7.2 12.5h3.2M13.6 9.3h3.2M13.6 12.5h3.2" />
+            </svg>
+          </span>
+          <span>AI数智作业平台</span>
+        </a>
+
+        <a class="back-link" href="./index.html">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5M11 6l-6 6 6 6" />
+          </svg>
+          返回
+        </a>
+      </header>
+
+      <section class="console-hero">
+        <div>
+          <p class="console-kicker">教师控制台</p>
+          <h1 id="console-title">请选择工作模块</h1>
+          <p>围绕阅卷与组卷两个核心教学流程，快速进入对应工作台。</p>
+        </div>
+      </section>
+
+      <section class="module-grid" aria-label="教师功能模块">
+        <a class="module-card module-card-primary" href="./grading.html" aria-label="进入智能阅卷">
+          <span class="module-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
+              <path d="M14 3.8v5h5M9.5 13h5M9.5 16.8h3.2M4.8 7.2v13h9.4" />
+              <path d="M15.2 16.7l1.5 1.5 3.1-3.4" />
+            </svg>
+          </span>
+          <span class="module-copy">
+            <strong>智能阅卷</strong>
+            <span>上传试卷与答题卡，自动识别答案、辅助批改并生成成绩分析。</span>
+          </span>
+          <span class="module-action">
+            进入
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h13M13 6l6 6-6 6" />
+            </svg>
+          </span>
+        </a>
+
+        <div class="module-card module-card-locked" aria-label="智能组卷已锁定" aria-disabled="true">
+          <span class="module-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M5.5 4.5h13v15h-13v-15Z" />
+              <path d="M8.5 8h7M8.5 11.5h7M8.5 15h3.5" />
+              <path d="M17.3 15.5l1.1 1.1 2.1-2.3M3.7 7.5h3.1M3.7 12h3.1M3.7 16.5h3.1" />
+            </svg>
+          </span>
+          <span class="module-copy">
+            <strong>智能组卷</strong>
+            <span>按知识点、题型和难度组合试题，一键生成适合课堂与测评的试卷。</span>
+          </span>
+          <span class="module-action module-action-locked">
+            已锁定
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7.5 10V7.8a4.5 4.5 0 0 1 9 0V10M6.5 10h11v9.5h-11V10ZM12 14v2" />
+            </svg>
+          </span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

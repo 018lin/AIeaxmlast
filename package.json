@@ -1,0 +1,15 @@
+{
+  "name": "ai-homework-grading-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI数智作业平台静态页面与DeepSeek后端代理服务",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
+}

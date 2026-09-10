@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI阅卷 - AI数智作业平台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="grading-shell ai-review-shell" aria-labelledby="ai-review-title">
+      <header class="console-topbar">
+        <a class="console-brand" href="./teacher.html" aria-label="返回教师控制台">
+          <span class="logo-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
+              <path d="M7.2 9.3h3.2M7.2 12.5h3.2M13.6 9.3h3.2M13.6 12.5h3.2" />
+            </svg>
+          </span>
+          <span>AI数智作业平台</span>
+        </a>
+
+        <a class="back-link" href="./grading.html">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5M11 6l-6 6 6 6" />
+          </svg>
+          智能阅卷
+        </a>
+      </header>
+
+      <section class="grading-header ai-review-header">
+        <div>
+          <p class="console-kicker">AI阅卷</p>
+          <h1 id="ai-review-title">选择试卷或试题后进行 AI 评分</h1>
+          <p>选择已有试卷，或上传单独试题和学生作答，设置满分与评分标准后由 DeepSeek 给出评分建议。</p>
+        </div>
+      </section>
+
+      <section class="ai-review-layout" aria-label="AI阅卷工作区">
+        <form class="ai-review-form" id="aiReviewForm">
+          <section class="ai-panel">
+            <header>
+              <div>
+                <h2>选择内容</h2>
+                <p>从阅卷历史中选择已有试卷，或上传单独试题。</p>
+              </div>
+            </header>
+
+            <div class="segmented-control" role="tablist" aria-label="阅卷类型">
+              <button class="segment-button is-active" type="button" data-mode="paper">已有试卷</button>
+              <button class="segment-button" type="button" data-mode="question">单独试题</button>
+            </div>
+
+            <div class="mode-panel is-active" data-mode-panel="paper">
+              <div class="saved-paper-list" id="savedPaperList">
+                <p class="empty-text">暂无已有试卷，请先返回智能阅卷上传试卷。</p>
+              </div>
+            </div>
+
+            <div class="mode-panel" data-mode-panel="question">
+              <label class="upload-tile compact-upload" for="singleQuestionUpload">
+                <input id="singleQuestionUpload" type="file" accept="image/*" />
+                <span class="upload-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img">
+                    <path d="M5.5 4.5h13v15h-13v-15Z" />
+                    <path d="M8.5 8h7M8.5 11.5h5.5M8.5 15h3.5" />
+                  </svg>
+                </span>
+                <span>
+                  <strong>上传单独试题</strong>
+                  <small id="singleQuestionFileName">支持 PNG、JPG、JPEG</small>
+                </span>
+              </label>
+            </div>
+
+            <div class="selected-preview" id="questionPreview">
+              <p class="empty-text">请选择试卷或上传试题</p>
+            </div>
+          </section>
+
+          <section class="ai-panel">
+            <header>
+              <div>
+                <h2>学生作答</h2>
+                <p>上传学生的作答图片用于 AI 分析。</p>
+              </div>
+            </header>
+
+            <label class="upload-tile compact-upload" for="studentAnswerUpload">
+              <input id="studentAnswerUpload" type="file" accept="image/*" />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                  <path d="M6 4.5h9l3 3v12H6v-15Z" />
+                  <path d="M15 4.5v3h3M9 11h6M9 14.5h6M9 18h3" />
+                </svg>
+              </span>
+              <span>
+                <strong>上传学生作答</strong>
+                <small id="studentAnswerFileName">支持 PNG、JPG、JPEG</small>
+              </span>
+            </label>
+
+            <div class="selected-preview" id="answerPreview">
+              <p class="empty-text">请上传学生作答图片</p>
+            </div>
+          </section>
+
+          <section class="ai-panel">
+            <header>
+              <div>
+                <h2>评分设置</h2>
+                <p>满分和备注会作为评分依据一起发送给 AI。</p>
+              </div>
+            </header>
+
+            <div class="settings-grid">
+              <label class="field-control">
+                <span>满分</span>
+                <input id="maxScoreInput" type="number" min="0.5" step="0.5" value="10" required />
+              </label>
+            </div>
+
+            <label class="field-control">
+              <span>备注与评分标准</span>
+              <textarea
+                id="rubricInput"
+                rows="7"
+                placeholder="例如：步骤完整 4 分，关键结论 4 分，书写规范 2 分；若只写答案且正确最多 6 分。"
+              ></textarea>
+            </label>
+
+            <div class="ai-actions">
+              <button class="primary-button" id="startAiGradeButton" type="submit">开始 AI 阅卷</button>
+              <span id="aiStatusText">模型：deepseek-flash</span>
+            </div>
+          </section>
+        </form>
+
+        <aside class="ai-result-panel" aria-label="AI阅卷结果">
+          <header>
+            <div>
+              <h2>评分结果</h2>
+              <p>AI 会返回分数、扣分点和改进建议。</p>
+            </div>
+          </header>
+          <div class="ai-result" id="aiResult">
+            <p class="empty-text">暂无评分结果</p>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

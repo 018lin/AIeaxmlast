@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>智能阅卷 - AI数智作业平台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="grading-shell" aria-labelledby="grading-title">
+      <header class="console-topbar">
+        <a class="console-brand" href="./teacher.html" aria-label="返回教师控制台">
+          <span class="logo-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
+              <path d="M7.2 9.3h3.2M7.2 12.5h3.2M13.6 9.3h3.2M13.6 12.5h3.2" />
+            </svg>
+          </span>
+          <span>AI数智作业平台</span>
+        </a>
+
+        <a class="back-link" href="./teacher.html">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5M11 6l-6 6 6 6" />
+          </svg>
+          控制台
+        </a>
+      </header>
+
+      <section class="grading-header">
+        <div>
+          <p class="console-kicker">智能阅卷</p>
+          <h1 id="grading-title">上传试卷与答案后进行裁剪对应</h1>
+          <p>分别在试卷图片和答案图片上拖拽框选区域，保存后形成一组题目与答案的对应关系。</p>
+        </div>
+        <a class="primary-button header-action-button" href="./ai-grading.html">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3.5l1.8 4.6 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.8-4.7-1.8 4.7-1.8L12 3.5Z" />
+            <path d="M18.5 14.5l.9 2.2 2.1.8-2.1.8-.9 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2ZM5.2 15l.7 1.7 1.6.6-1.6.6-.7 1.7-.6-1.7-1.7-.6 1.7-.6.6-1.7Z" />
+          </svg>
+          AI阅卷
+        </a>
+      </section>
+
+      <section class="grading-layout">
+        <div class="grading-main">
+          <section class="upload-grid" aria-label="上传图片">
+            <label class="upload-tile" for="paperUpload">
+              <input id="paperUpload" type="file" accept="image/*" />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                  <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
+                  <path d="M14 3.8v5h5M9.5 14h5M9.5 17h3" />
+                </svg>
+              </span>
+              <span>
+                <strong>上传试卷图片</strong>
+                <small id="paperFileName">支持 PNG、JPG、JPEG</small>
+              </span>
+            </label>
+
+            <label class="upload-tile" for="answerUpload">
+              <input id="answerUpload" type="file" accept="image/*" />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                  <path d="M5.5 4.5h13v15h-13v-15Z" />
+                  <path d="M8.5 8h7M8.5 11.5h7M8.5 15h3.5M14.8 16.8l1 1 2.1-2.3" />
+                </svg>
+              </span>
+              <span>
+                <strong>上传答案图片</strong>
+                <small id="answerFileName">支持 PNG、JPG、JPEG</small>
+              </span>
+            </label>
+          </section>
+
+          <section class="crop-grid" aria-label="裁剪工作区">
+            <article class="crop-panel">
+              <header>
+                <div>
+                  <h2>试卷图片</h2>
+                  <p>拖拽框选题目区域</p>
+                </div>
+                <span id="paperCropState">未选择</span>
+              </header>
+              <div class="crop-stage" id="paperStage" data-kind="paper">
+                <img id="paperImage" alt="试卷图片预览" />
+                <div class="crop-empty">请先上传试卷图片</div>
+              </div>
+            </article>
+
+            <article class="crop-panel">
+              <header>
+                <div>
+                  <h2>答案图片</h2>
+                  <p>拖拽框选对应答案区域</p>
+                </div>
+                <span id="answerCropState">未选择</span>
+              </header>
+              <div class="crop-stage" id="answerStage" data-kind="answer">
+                <img id="answerImage" alt="答案图片预览" />
+                <div class="crop-empty">请先上传答案图片</div>
+              </div>
+            </article>
+          </section>
+
+          <section class="pair-toolbar" aria-label="对应关系操作">
+            <div>
+              <strong>题目与答案对应</strong>
+              <span>两边各完成一次框选后即可保存。</span>
+            </div>
+            <div class="pair-actions">
+              <button class="ghost-button" id="clearCropButton" type="button">清除框选</button>
+              <button class="primary-button" id="savePairButton" type="button" disabled>保存对应关系</button>
+            </div>
+          </section>
+
+          <section class="pair-list-panel" aria-label="已保存对应关系">
+            <header>
+              <h2>已保存对应关系</h2>
+              <span id="pairCount">0 组</span>
+            </header>
+            <div class="pair-list" id="pairList">
+              <p class="empty-text">暂无对应关系</p>
+            </div>
+          </section>
+        </div>
+
+        <aside class="history-panel" aria-label="阅卷历史">
+          <header>
+            <div>
+              <h2>阅卷历史</h2>
+              <p>上传过的试卷图片会保存在这里。</p>
+            </div>
+            <button class="text-button" id="clearHistoryButton" type="button">清空</button>
+          </header>
+          <div class="history-list" id="historyList">
+            <p class="empty-text">暂无阅卷历史</p>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
