@@ -526,7 +526,6 @@ if (aiReviewRoot) {
     selectedPaper: null,
     singleQuestion: null,
     studentAnswer: null,
-    aiHistory: [],
   };
 
   const elements = {
@@ -545,8 +544,6 @@ if (aiReviewRoot) {
     startAiGradeButton: document.querySelector("#startAiGradeButton"),
     aiStatusText: document.querySelector("#aiStatusText"),
     aiResult: document.querySelector("#aiResult"),
-    aiHistoryList: document.querySelector("#aiHistoryList"),
-    clearAiHistoryButton: document.querySelector("#clearAiHistoryButton"),
   };
 
   const escapeHtml = (value) =>
@@ -599,11 +596,6 @@ if (aiReviewRoot) {
     return canvas.toDataURL("image/jpeg", 0.82);
   };
 
-  const formatTime = (date) => {
-    const pad = (value) => String(value).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  };
-
   const buildAiComment = ({ analysis = "", deductions = [], suggestions = [], rawContent = "" }) => {
     const commentParts = [
       analysis,
@@ -612,30 +604,6 @@ if (aiReviewRoot) {
     ].filter(Boolean);
 
     return commentParts.join("\n") || rawContent || "暂无 AI 点评。";
-  };
-
-  const toAiHistoryItem = (item) => {
-    const createdAt = item.createdAt ? new Date(item.createdAt) : null;
-    const deductions = Array.isArray(item.deductions) ? item.deductions : [];
-    const suggestions = Array.isArray(item.suggestions) ? item.suggestions : [];
-    const score = item.score ?? "-";
-    const maxScore = item.maxScore ?? "-";
-
-    return {
-      id: item.id,
-      questionName: item.questionName || "未命名题目",
-      answerName: item.answerName || "未命名作答",
-      questionImage: item.questionImage || "",
-      answerImage: item.answerImage || "",
-      scoreText: `${score} / ${maxScore}`,
-      level: item.level || "AI评分",
-      analysis: item.analysis || "",
-      deductions,
-      suggestions,
-      rawContent: item.rawContent || "",
-      comment: buildAiComment({ analysis: item.analysis || "", deductions, suggestions, rawContent: item.rawContent || "" }),
-      time: createdAt && !Number.isNaN(createdAt.getTime()) ? formatTime(createdAt) : "",
-    };
   };
 
   const renderDetailImage = (src, label, name) =>
@@ -670,45 +638,6 @@ if (aiReviewRoot) {
         <p>${escapeHtml(item.comment)}</p>
       </article>
     `;
-  };
-
-  const loadAiHistory = async () => {
-    const payload = await apiRequest("/api/ai-grade-history", { cache: "no-store" });
-    state.aiHistory = (payload.history || []).map(toAiHistoryItem);
-  };
-
-  const renderAiHistory = async () => {
-    if (!elements.aiHistoryList) {
-      return;
-    }
-
-    try {
-      await loadAiHistory();
-    } catch (error) {
-      elements.aiHistoryList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
-      return;
-    }
-
-    if (state.aiHistory.length === 0) {
-      elements.aiHistoryList.innerHTML = '<p class="empty-text">暂无 AI 阅卷历史</p>';
-      return;
-    }
-
-    elements.aiHistoryList.innerHTML = state.aiHistory
-      .map(
-        (item) => `
-          <button class="ai-history-record" type="button" data-history-id="${escapeHtml(item.id)}">
-            <span class="history-title-row">
-              <strong>${escapeHtml(item.scoreText)}</strong>
-              <small>${escapeHtml(item.time)}</small>
-            </span>
-            <span class="history-meta-line">题目：${escapeHtml(item.questionName)}</span>
-            <span class="history-meta-line">学生作答：${escapeHtml(item.answerName)}</span>
-            <span class="history-comment-line">${escapeHtml(item.comment)}</span>
-          </button>
-        `
-      )
-      .join("");
   };
 
   const getActiveQuestion = () => (state.mode === "paper" ? state.selectedPaper : state.singleQuestion);
@@ -973,28 +902,6 @@ if (aiReviewRoot) {
     }
   });
 
-  elements.aiHistoryList?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-history-id]");
-
-    if (!button) {
-      return;
-    }
-
-    const item = state.aiHistory.find((historyItem) => historyItem.id === button.dataset.historyId);
-    renderAiDetail(item);
-  });
-
-  elements.clearAiHistoryButton?.addEventListener("click", async () => {
-    try {
-      await apiRequest("/api/ai-grade-history", { method: "DELETE" });
-      state.aiHistory = [];
-      renderAiDetail(null);
-      await renderAiHistory();
-    } catch (error) {
-      elements.aiHistoryList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
-    }
-  });
-
   elements.singleQuestionUpload.addEventListener("change", (event) => handleImageUpload(event, "question"));
   elements.studentAnswerUpload.addEventListener("change", (event) => handleImageUpload(event, "answer"));
 
@@ -1007,7 +914,6 @@ if (aiReviewRoot) {
       const result = await requestAiGrade();
       renderAiResult(result.parsed, result.raw);
       elements.aiStatusText.textContent = result.historyError ? `评分完成，历史保存失败（${result.model}）` : `评分完成，已保存历史（${result.model}）`;
-      await renderAiHistory();
     } catch (error) {
       elements.aiResult.innerHTML = `
         <article class="ai-result-card is-error">
@@ -1023,5 +929,4 @@ if (aiReviewRoot) {
 
   renderSavedPapers().catch(() => {});
   renderAnswerPreview();
-  renderAiHistory().catch(() => {});
 }

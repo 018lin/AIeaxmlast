@@ -1785,85 +1785,12 @@ button {
 .ai-detail-panel {
   max-height: calc(100vh - 48px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .ai-detail-panel .ai-result {
   min-height: 240px;
   overflow: auto;
-}
-
-.ai-history-section {
-  border-top: 1px solid rgba(240, 220, 201, 0.72);
-}
-
-.ai-history-section header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 16px 18px 0;
-  border-bottom: 0;
-}
-
-.ai-history-section h3 {
-  margin: 0;
-  color: #111c2f;
-  font-size: 16px;
-  line-height: 1.35;
-  font-weight: 900;
-}
-
-.ai-history-list {
-  max-height: 320px;
-  overflow: auto;
-}
-
-.ai-history-record {
-  width: 100%;
-  display: grid;
-  gap: 7px;
-  padding: 12px;
-  border: 1px solid #eceff3;
-  border-radius: 14px;
-  color: inherit;
-  background: #fafbfc;
-  text-align: left;
-  cursor: pointer;
-}
-
-.ai-history-record:hover,
-.ai-history-record:focus-visible {
-  border-color: rgba(255, 106, 22, 0.58);
-  outline: none;
-}
-
-.ai-history-record .history-title-row {
-  align-items: center;
-}
-
-.ai-history-record .history-title-row small {
-  flex: 0 0 auto;
-  color: #8791a2;
-  font-size: 12px;
-  line-height: 1.35;
-  font-weight: 800;
-}
-
-.history-meta-line,
-.history-comment-line {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  color: #6b7688;
-  font-size: 12px;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.history-comment-line {
-  color: #5f6a7c;
 }
 
 .history-detail-preview img,
