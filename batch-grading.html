@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>批量阅卷 MVP - AI数智作业平台</title>
+    <link rel="stylesheet" href="./styles.css?v=20260911-batch-mvp" />
+  </head>
+  <body>
+    <main class="grading-shell batch-shell" aria-labelledby="batch-title">
+      <header class="console-topbar">
+        <a class="console-brand" href="./teacher.html" aria-label="返回教师控制台">
+          <span class="logo-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
+              <path d="M7.2 9.3h3.2M7.2 12.5h3.2M13.6 9.3h3.2M13.6 12.5h3.2" />
+            </svg>
+          </span>
+          <span>AI数智作业平台</span>
+        </a>
+
+        <a class="back-link" href="./teacher.html">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5M11 6l-6 6 6 6" />
+          </svg>
+          控制台
+        </a>
+      </header>
+
+      <section class="grading-header">
+        <div>
+          <p class="console-kicker">批量阅卷 MVP</p>
+          <h1 id="batch-title">考试、模板、扫描答卷和成绩汇总</h1>
+          <p>先用模板坐标自动裁题，再由后端逐题调用 AI 阅卷并生成学生成绩明细。</p>
+        </div>
+      </section>
+
+      <section class="batch-dashboard" aria-label="批量阅卷工作台">
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>基础数据</h2>
+              <p>创建班级、学生、考试和题目。</p>
+            </div>
+            <button class="ghost-button" id="refreshButton" type="button">刷新</button>
+          </header>
+
+          <div class="batch-form-grid">
+            <form id="classForm" class="compact-form">
+              <label class="field-control">
+                <span>班级名称</span>
+                <input name="name" placeholder="高一 1 班" required />
+              </label>
+              <label class="field-control">
+                <span>年级</span>
+                <input name="grade" placeholder="高一" />
+              </label>
+              <button class="primary-button" type="submit">新增班级</button>
+            </form>
+
+            <form id="studentForm" class="compact-form">
+              <label class="field-control">
+                <span>所属班级</span>
+                <select name="classId" data-select="classes"></select>
+              </label>
+              <label class="field-control">
+                <span>姓名</span>
+                <input name="name" placeholder="学生姓名" required />
+              </label>
+              <label class="field-control">
+                <span>学号</span>
+                <input name="studentNo" placeholder="001" />
+              </label>
+              <button class="primary-button" type="submit">新增学生</button>
+            </form>
+
+            <form id="examForm" class="compact-form">
+              <label class="field-control">
+                <span>班级</span>
+                <select name="classId" data-select="classes"></select>
+              </label>
+              <label class="field-control">
+                <span>考试名称</span>
+                <input name="name" placeholder="9 月单元测" required />
+              </label>
+              <label class="field-control">
+                <span>科目</span>
+                <input name="subject" placeholder="数学" />
+              </label>
+              <button class="primary-button" type="submit">新增考试</button>
+            </form>
+
+            <form id="questionForm" class="compact-form compact-form-wide">
+              <label class="field-control">
+                <span>考试</span>
+                <select name="examId" data-select="exams"></select>
+              </label>
+              <label class="field-control">
+                <span>题号</span>
+                <input name="questionNo" placeholder="第 1 题" required />
+              </label>
+              <label class="field-control">
+                <span>满分</span>
+                <input name="maxScore" type="number" min="0.5" step="0.5" value="10" required />
+              </label>
+              <label class="field-control">
+                <span>知识点</span>
+                <input name="knowledgePoints" placeholder="函数, 单调性" />
+              </label>
+              <label class="field-control field-span-2">
+                <span>题目说明</span>
+                <input name="title" placeholder="可填题干摘要，帮助 AI 理解题目" />
+              </label>
+              <label class="field-control field-span-2">
+                <span>评分标准</span>
+                <textarea name="rubric" rows="3" placeholder="步骤分、结论分、扣分规则"></textarea>
+              </label>
+              <button class="primary-button" type="submit">新增题目</button>
+            </form>
+          </div>
+
+          <div class="batch-lists">
+            <div>
+              <h3>学生</h3>
+              <div id="studentList" class="mini-list"></div>
+            </div>
+            <div>
+              <h3>考试与题目</h3>
+              <div id="examList" class="mini-list"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>试卷模板</h2>
+              <p>上传标准试卷，选择题目后拖拽框选作答区域。</p>
+            </div>
+          </header>
+
+          <div class="template-toolbar">
+            <label class="field-control">
+              <span>考试</span>
+              <select id="templateExamSelect" data-select="exams"></select>
+            </label>
+            <label class="upload-tile compact-upload" for="templateUpload">
+              <input id="templateUpload" type="file" accept="image/*" />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                  <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
+                  <path d="M14 3.8v5h5M9.5 14h5M9.5 17h3" />
+                </svg>
+              </span>
+              <span>
+                <strong>上传模板</strong>
+                <small id="templateFileName">支持 PNG、JPG、WEBP</small>
+              </span>
+            </label>
+            <label class="field-control">
+              <span>框选题目</span>
+              <select id="regionQuestionSelect"></select>
+            </label>
+            <button class="primary-button" id="saveRegionButton" type="button" disabled>保存区域</button>
+          </div>
+
+          <div class="template-stage" id="templateStage">
+            <img id="templateImage" alt="试卷模板预览" />
+            <div class="crop-empty">请选择考试并上传模板</div>
+          </div>
+          <div id="regionList" class="mini-list horizontal-list"></div>
+        </article>
+
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>批量扫描答卷</h2>
+              <p>创建批次，上传多张答卷，并先手动绑定学生。</p>
+            </div>
+          </header>
+
+          <div class="batch-actions-row">
+            <form id="batchForm" class="inline-form">
+              <label class="field-control">
+                <span>考试</span>
+                <select name="examId" id="batchExamSelect" data-select="exams"></select>
+              </label>
+              <label class="field-control">
+                <span>批次名称</span>
+                <input name="name" placeholder="9 月单元测第一批" required />
+              </label>
+              <button class="primary-button" type="submit">创建批次</button>
+            </form>
+            <label class="upload-tile compact-upload" for="scanUpload">
+              <input id="scanUpload" type="file" accept="image/*" multiple />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                  <path d="M6 4.5h9l3 3v12H6v-15Z" />
+                  <path d="M15 4.5v3h3M9 11h6M9 14.5h6M9 18h3" />
+                </svg>
+              </span>
+              <span>
+                <strong>选择扫描答卷</strong>
+                <small id="scanFileName">可多选图片</small>
+              </span>
+            </label>
+          </div>
+
+          <div class="batch-runbar">
+            <label class="field-control">
+              <span>当前批次</span>
+              <select id="activeBatchSelect"></select>
+            </label>
+            <button class="ghost-button" id="uploadPagesButton" type="button" disabled>上传绑定答卷</button>
+            <button class="ghost-button" id="processBatchButton" type="button" disabled>按模板裁切</button>
+            <button class="primary-button" id="startBatchGradeButton" type="button" disabled>开始逐题批阅</button>
+            <span id="batchStatusText">等待批量任务</span>
+          </div>
+
+          <div id="pendingScanList" class="scan-list"></div>
+          <div id="uploadedPageList" class="mini-list horizontal-list"></div>
+        </article>
+
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>成绩汇总</h2>
+              <p>按学生汇总总分，并保留每题评分明细。</p>
+            </div>
+          </header>
+
+          <div class="progress-track">
+            <div id="gradeProgressBar"></div>
+          </div>
+          <div id="resultSummary" class="result-table-wrap"></div>
+          <div id="resultDetails" class="result-table-wrap"></div>
+        </article>
+      </section>
+    </main>
+
+    <script src="./batch-grading.js?v=20260911-batch-mvp"></script>
+  </body>
+</html>

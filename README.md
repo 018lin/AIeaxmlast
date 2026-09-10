@@ -53,8 +53,32 @@ Neon Postgres 集成会自动配置 `POSTGRES_URL`。如果没有自动注入，
 
 - `uploaded_images`：保存上传过的试卷、答案、单独试题、学生作答和裁剪图片。
 - `question_answer_pairs`：保存题目区域与答案区域的对应关系，并关联对应裁剪图和框选坐标。
+- `classes`、`students`、`exams`、`exam_questions`：保存班级、学生、考试和题目。
+- `paper_templates`、`template_regions`：保存试卷模板图片和每道题的裁切区域。
+- `scan_batches`、`scanned_pages`、`answer_crops`、`grading_jobs`、`grading_results`：保存扫描批次、学生答卷、自动裁切结果、逐题阅卷任务和成绩明细。
 
 Neon 连接串通常自带 `sslmode=require`，代码会自动启用 SSL；也可以显式设置 `DATABASE_SSL=true`。
+
+## 批量阅卷 MVP
+
+教师控制台新增了“批量阅卷 MVP”入口：
+
+```text
+http://localhost:8080/batch-grading.html
+```
+
+第一阶段批量流程：
+
+1. 创建班级、学生、考试和考试题目。
+2. 上传一张标准试卷模板。
+3. 选择题目，在模板图片上拖拽框选该题作答区域并保存。
+4. 创建扫描批次。
+5. 多选上传学生扫描答卷，并手动绑定到学生。
+6. 点击“按模板裁切”，后端会使用模板相对坐标自动裁出每个学生的每道题作答图，并创建逐题评分任务。
+7. 点击“开始逐题批阅”，前端会循环调用 `/api/mvp?action=grade-next`，后端每次认领一道题并复用 DeepSeek 视觉阅卷逻辑。
+8. 页面会展示学生总分表和每题评分明细。
+
+当前 MVP 默认一张扫描图片是一名学生的一页完整答卷。正式大规模上线前，建议继续补二维码/条形码识别、PDF 拆页、异常复核、对象存储和后台队列。
 
 ## Docker 部署
 
