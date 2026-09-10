@@ -41,7 +41,7 @@
             <header>
               <div>
                 <h2>选择内容</h2>
-                <p>从阅卷历史中选择已有试卷，或上传单独试题。</p>
+                <p>从已上传试卷中选择，或上传单独试题。</p>
               </div>
             </header>
 
@@ -135,16 +135,25 @@
           </section>
         </form>
 
-        <aside class="ai-result-panel" aria-label="AI阅卷结果">
+        <aside class="ai-result-panel ai-detail-panel" aria-label="阅卷详情">
           <header>
             <div>
-              <h2>评分结果</h2>
-              <p>AI 会返回分数、扣分点和改进建议。</p>
+              <h2>阅卷详情</h2>
+              <p>只展示真实 AI 阅卷生成的题目、作答、评分和点评。</p>
             </div>
           </header>
           <div class="ai-result" id="aiResult">
-            <p class="empty-text">暂无评分结果</p>
+            <p class="empty-text">暂无阅卷详情</p>
           </div>
+          <section class="ai-history-section" aria-label="AI阅卷历史">
+            <header>
+              <h3>阅卷历史</h3>
+              <button class="text-button" id="clearAiHistoryButton" type="button">清空</button>
+            </header>
+            <div class="history-list ai-history-list" id="aiHistoryList">
+              <p class="empty-text">暂无 AI 阅卷历史</p>
+            </div>
+          </section>
         </aside>
       </section>
     </main>
