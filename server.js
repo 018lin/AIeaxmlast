@@ -10,7 +10,8 @@ loadEnvFile(path.join(ROOT_DIR, ".env"));
 
 const PORT = Number(process.env.PORT || 8080);
 const DEEPSEEK_ENDPOINT = process.env.DEEPSEEK_ENDPOINT || "https://api.deepseek.com/chat/completions";
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-flash";
+const DEEPSEEK_VISION_MODEL = "deepseek-v4-flash-vision-exp";
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL === "deepseek-flash" ? DEEPSEEK_VISION_MODEL : process.env.DEEPSEEK_MODEL || DEEPSEEK_VISION_MODEL;
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
 const MIME_TYPES = {
@@ -106,10 +107,39 @@ function stripJsonFence(content) {
 
 function parseAiResult(content) {
   try {
-    return JSON.parse(stripJsonFence(content));
+    return JSON.parse(extractJsonContent(content));
   } catch {
     return null;
   }
+}
+
+function extractJsonContent(content) {
+  const normalized = stripJsonFence(content);
+  const start = normalized.indexOf("{");
+  const end = normalized.lastIndexOf("}");
+
+  if (start !== -1 && end > start) {
+    return normalized.slice(start, end + 1);
+  }
+
+  return normalized;
+}
+
+function getAssistantContent(payload) {
+  const content = payload?.choices?.[0]?.message?.content;
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => item?.text || item?.content || "")
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return payload?.choices?.[0]?.message?.reasoning_content || "";
 }
 
 function validateGradeRequest(payload) {
@@ -203,7 +233,15 @@ async function handleAiGrade(request, response) {
       return;
     }
 
-    const rawContent = deepseekPayload?.choices?.[0]?.message?.content || "";
+    const rawContent = getAssistantContent(deepseekPayload);
+
+    if (!rawContent.trim()) {
+      sendJson(response, 502, {
+        message: `AI 没有返回评分内容。当前模型为 ${DEEPSEEK_MODEL}，请确认服务端使用支持图片输入的 DeepSeek 视觉模型。`,
+      });
+      return;
+    }
+
     const result = parseAiResult(rawContent);
     let history = null;
     let historyError = "";

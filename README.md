@@ -21,7 +21,7 @@ DeepSeek Key 和数据库连接串都放在服务端环境变量中，前端不�
 
 ```text
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
-DEEPSEEK_MODEL=deepseek-flash
+DEEPSEEK_MODEL=deepseek-v4-flash-vision-exp
 DATABASE_URL=postgresql://username:password@your-neon-host/neondb?sslmode=require
 DATABASE_SSL=true
 PORT=8080
@@ -41,7 +41,7 @@ PORT=8080
 
 ```text
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
-DEEPSEEK_MODEL=deepseek-flash
+DEEPSEEK_MODEL=deepseek-v4-flash-vision-exp
 DATABASE_SSL=true
 ```
 

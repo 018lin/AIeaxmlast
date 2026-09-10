@@ -585,7 +585,7 @@ if (gradingRoot) {
 const aiReviewRoot = document.querySelector(".ai-review-shell");
 
 if (aiReviewRoot) {
-  const DEEPSEEK_MODEL = "deepseek-flash";
+  const AI_MODEL_LABEL = "DeepSeek 视觉模型";
 
   const state = {
     mode: "paper",
@@ -822,9 +822,11 @@ if (aiReviewRoot) {
 
   const parseAiResult = (content) => {
     const normalized = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+    const start = normalized.indexOf("{");
+    const end = normalized.lastIndexOf("}");
 
     try {
-      return JSON.parse(normalized);
+      return JSON.parse(start !== -1 && end > start ? normalized.slice(start, end + 1) : normalized);
     } catch {
       return null;
     }
@@ -834,8 +836,8 @@ if (aiReviewRoot) {
     if (!result) {
       elements.aiResult.innerHTML = `
         <article class="ai-result-card">
-          <h3>AI 返回内容</h3>
-          <pre>${escapeHtml(rawContent || "未能解析评分结果。")}</pre>
+          <h3>AI 返回内容未能解析</h3>
+          <pre>${escapeHtml(rawContent || "AI 没有返回评分内容，请确认服务端配置的是支持图片输入的视觉模型。")}</pre>
         </article>
       `;
       return;
@@ -876,7 +878,7 @@ if (aiReviewRoot) {
   const setBusy = (busy) => {
     elements.startAiGradeButton.disabled = busy;
     elements.startAiGradeButton.textContent = busy ? "AI阅卷中..." : "开始 AI 阅卷";
-    elements.aiStatusText.textContent = busy ? "正在调用 DeepSeek 分析图片与评分标准" : `模型：${DEEPSEEK_MODEL}`;
+    elements.aiStatusText.textContent = busy ? "正在调用 DeepSeek 分析图片与评分标准" : `模型：${AI_MODEL_LABEL}`;
   };
 
   const requestAiGrade = async () => {
@@ -923,7 +925,7 @@ if (aiReviewRoot) {
     }
 
     const content = payload?.rawContent || "";
-    return { parsed: payload?.result || parseAiResult(content), raw: content, historyError: payload?.historyError || "" };
+    return { parsed: payload?.result || parseAiResult(content), raw: content, model: payload?.model || AI_MODEL_LABEL, historyError: payload?.historyError || "" };
   };
 
   elements.segmentButtons.forEach((button) => {
@@ -949,7 +951,7 @@ if (aiReviewRoot) {
     try {
       const result = await requestAiGrade();
       renderAiResult(result.parsed, result.raw);
-      elements.aiStatusText.textContent = result.historyError ? "评分完成，历史保存失败" : "评分完成，已保存历史";
+      elements.aiStatusText.textContent = result.historyError ? `评分完成，历史保存失败（${result.model}）` : `评分完成，已保存历史（${result.model}）`;
     } catch (error) {
       elements.aiResult.innerHTML = `
         <article class="ai-result-card is-error">

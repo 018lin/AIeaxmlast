@@ -8,7 +8,7 @@ services:
       DATABASE_URL: postgres://postgres:postgres@db:5432/ai_grading
       DATABASE_SSL: "false"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-      DEEPSEEK_MODEL: deepseek-flash
+      DEEPSEEK_MODEL: deepseek-v4-flash-vision-exp
     depends_on:
       - db
 
