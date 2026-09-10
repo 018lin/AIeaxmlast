@@ -6,20 +6,24 @@ const { Pool } = require("pg");
 let pool;
 
 function getDatabaseUrl() {
-  return process.env.DATABASE_URL || "";
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+}
+
+function shouldUseSsl(databaseUrl) {
+  return process.env.DATABASE_SSL === "true" || databaseUrl.includes("sslmode=require");
 }
 
 function getPool() {
   const databaseUrl = getDatabaseUrl();
 
   if (!databaseUrl) {
-    throw new Error("服务端未配置 DATABASE_URL。");
+    throw new Error("服务端未配置 DATABASE_URL 或 POSTGRES_URL。");
   }
 
   if (!pool) {
     pool = new Pool({
       connectionString: databaseUrl,
-      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+      ssl: shouldUseSsl(databaseUrl) ? { rejectUnauthorized: false } : undefined,
     });
   }
 
@@ -28,7 +32,7 @@ function getPool() {
 
 async function initDatabase() {
   if (!getDatabaseUrl()) {
-    console.warn("DATABASE_URL is not configured. Database APIs will return 503 until it is set.");
+    console.warn("DATABASE_URL or POSTGRES_URL is not configured. Database APIs will return 503 until it is set.");
     return;
   }
 

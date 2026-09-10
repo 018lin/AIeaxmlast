@@ -68,7 +68,7 @@ function sendJson(response, statusCode, payload) {
 }
 
 function sendServiceError(response, error) {
-  const isDatabaseConfigError = error.message && error.message.includes("DATABASE_URL");
+  const isDatabaseConfigError = error.message && (error.message.includes("DATABASE_URL") || error.message.includes("POSTGRES_URL"));
   sendJson(response, isDatabaseConfigError ? 503 : 500, {
     message: isDatabaseConfigError ? "服务端未配置数据库连接。" : "数据库服务暂时不可用。",
   });
