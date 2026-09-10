@@ -42,7 +42,7 @@ if (gradingRoot) {
     answerCropState: document.querySelector("#answerCropState"),
     savePairButton: document.querySelector("#savePairButton"),
     clearCropButton: document.querySelector("#clearCropButton"),
-    historyList: document.querySelector("#historyList"),
+    historyList: document.querySelector("#aiGradingHistoryList"),
     clearHistoryButton: document.querySelector("#clearHistoryButton"),
   };
 
@@ -407,7 +407,7 @@ if (gradingRoot) {
     }
 
     try {
-      const payload = await apiRequest("/api/ai-grade-history");
+      const payload = await apiRequest("/api/ai-grade-history", { cache: "no-store" });
       state.history = (payload.history || []).map(toHistoryItem);
     } catch (error) {
       elements.historyList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
@@ -673,7 +673,7 @@ if (aiReviewRoot) {
   };
 
   const loadAiHistory = async () => {
-    const payload = await apiRequest("/api/ai-grade-history");
+    const payload = await apiRequest("/api/ai-grade-history", { cache: "no-store" });
     state.aiHistory = (payload.history || []).map(toAiHistoryItem);
   };
 

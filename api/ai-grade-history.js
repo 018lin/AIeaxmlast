@@ -11,6 +11,7 @@ module.exports = async function handler(request, response) {
   if (request.method === "GET") {
     try {
       const history = await db.listAiGradingHistory();
+      response.setHeader("Cache-Control", "no-store");
       sendJson(response, 200, { history });
     } catch (error) {
       sendDatabaseError(response, error);
