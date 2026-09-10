@@ -26,6 +26,7 @@ if (gradingRoot) {
       paper: null,
       answer: null,
     },
+    history: [],
   };
 
   const elements = {
@@ -41,6 +42,8 @@ if (gradingRoot) {
     answerCropState: document.querySelector("#answerCropState"),
     savePairButton: document.querySelector("#savePairButton"),
     clearCropButton: document.querySelector("#clearCropButton"),
+    historyList: document.querySelector("#historyList"),
+    clearHistoryButton: document.querySelector("#clearHistoryButton"),
   };
 
   const escapeHtml = (value) =>
@@ -64,6 +67,21 @@ if (gradingRoot) {
     }
 
     return payload;
+  };
+
+  const formatTime = (date) => {
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const buildAiComment = ({ analysis = "", deductions = [], suggestions = [], rawContent = "" }) => {
+    const commentParts = [
+      analysis,
+      deductions.length ? `扣分点：${deductions.join("；")}` : "",
+      suggestions.length ? `改进建议：${suggestions.join("；")}` : "",
+    ].filter(Boolean);
+
+    return commentParts.join("\n") || rawContent || "暂无 AI 点评。";
   };
 
   const readFileAsDataUrl = (file) =>
@@ -138,6 +156,26 @@ if (gradingRoot) {
     });
 
     return payload.pair;
+  };
+
+  const toHistoryItem = (item) => {
+    const createdAt = item.createdAt ? new Date(item.createdAt) : null;
+    const deductions = Array.isArray(item.deductions) ? item.deductions : [];
+    const suggestions = Array.isArray(item.suggestions) ? item.suggestions : [];
+    const score = item.score ?? "-";
+    const maxScore = item.maxScore ?? "-";
+
+    return {
+      id: item.id,
+      questionName: item.questionName || "未命名题目",
+      answerName: item.answerName || "未命名作答",
+      questionImage: item.questionImage || "",
+      answerImage: item.answerImage || "",
+      scoreText: `${score} / ${maxScore}`,
+      level: item.level || "AI评分",
+      comment: buildAiComment({ analysis: item.analysis || "", deductions, suggestions, rawContent: item.rawContent || "" }),
+      time: createdAt && !Number.isNaN(createdAt.getTime()) ? formatTime(createdAt) : "",
+    };
   };
 
   const cropToDataUrl = (kind) => {
@@ -358,6 +396,65 @@ if (gradingRoot) {
     }
   };
 
+  const renderHistoryImage = (src, label, name) =>
+    src
+      ? `<img src="${src}" alt="${escapeHtml(name)}" />`
+      : `<div class="history-image-empty">${escapeHtml(label)}</div>`;
+
+  const renderHistory = async () => {
+    if (!elements.historyList) {
+      return;
+    }
+
+    try {
+      const payload = await apiRequest("/api/ai-grade-history");
+      state.history = (payload.history || []).map(toHistoryItem);
+    } catch (error) {
+      elements.historyList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
+      return;
+    }
+
+    if (state.history.length === 0) {
+      elements.historyList.innerHTML = '<p class="empty-text">暂无 AI 阅卷历史</p>';
+      return;
+    }
+
+    elements.historyList.innerHTML = state.history
+      .map(
+        (item) => `
+          <article class="history-item ai-history-item">
+            <div class="history-images">
+              <div>
+                ${renderHistoryImage(item.questionImage, "题目", item.questionName)}
+                <span>题目：${escapeHtml(item.questionName)}</span>
+              </div>
+              <div>
+                ${renderHistoryImage(item.answerImage, "学生作答", item.answerName)}
+                <span>学生作答：${escapeHtml(item.answerName)}</span>
+              </div>
+            </div>
+            <div class="history-content">
+              <div class="history-title-row">
+                <strong>${escapeHtml(item.scoreText)}</strong>
+                <span>${escapeHtml(item.time)}</span>
+              </div>
+              <dl class="history-meta">
+                <div>
+                  <dt>评分</dt>
+                  <dd>${escapeHtml(item.level)}</dd>
+                </div>
+                <div>
+                  <dt>AI点评</dt>
+                  <dd>${escapeHtml(item.comment)}</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+        `
+      )
+      .join("");
+  };
+
   elements.paperUpload.addEventListener("change", (event) => handleUpload(event, "paper"));
   elements.answerUpload.addEventListener("change", (event) => handleUpload(event, "answer"));
 
@@ -399,6 +496,15 @@ if (gradingRoot) {
     }
   });
 
+  elements.clearHistoryButton?.addEventListener("click", async () => {
+    try {
+      await apiRequest("/api/ai-grade-history", { method: "DELETE" });
+      await renderHistory();
+    } catch (error) {
+      elements.historyList.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
+    }
+  });
+
   window.addEventListener("resize", () => {
     renderSelection("paper");
     renderSelection("answer");
@@ -406,6 +512,7 @@ if (gradingRoot) {
 
   setupCropStage(elements.paperStage, "paper");
   setupCropStage(elements.answerStage, "answer");
+  renderHistory().catch(() => {});
 }
 
 const aiReviewRoot = document.querySelector(".ai-review-shell");

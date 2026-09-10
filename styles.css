@@ -1136,9 +1136,18 @@ button {
   overflow: hidden;
 }
 
+.grading-history-panel {
+  position: static;
+}
+
 .history-list {
   max-height: calc(100vh - 240px);
   overflow: auto;
+}
+
+.grading-history-list {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  max-height: none;
 }
 
 .history-item {
@@ -1271,6 +1280,12 @@ button {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   white-space: pre-line;
+}
+
+.grading-history-list .history-meta dd {
+  white-space: pre-line;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .ai-history-summary {
