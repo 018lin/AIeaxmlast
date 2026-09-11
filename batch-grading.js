@@ -19,6 +19,10 @@
 
   const elements = {
     refreshButton: $("#refreshButton"),
+    classMetric: $("#classMetric"),
+    studentMetric: $("#studentMetric"),
+    examMetric: $("#examMetric"),
+    questionMetric: $("#questionMetric"),
     classForm: $("#classForm"),
     studentForm: $("#studentForm"),
     examForm: $("#examForm"),
@@ -122,6 +126,13 @@
     $$('[data-select="exams"]').forEach((select) => {
       fillSelect(select, state.exams, (item) => `${item.name}${item.subject ? `｜${item.subject}` : ""}`, "请选择考试");
     });
+  }
+
+  function renderMetrics() {
+    elements.classMetric.textContent = state.classes.length;
+    elements.studentMetric.textContent = state.students.length;
+    elements.examMetric.textContent = state.exams.length;
+    elements.questionMetric.textContent = state.questions.length;
   }
 
   function renderStudents() {
@@ -273,22 +284,32 @@
       `;
     }
 
-    if (!results?.details?.length) {
+    const failures = results?.failures || [];
+    if (!results?.details?.length && !failures.length) {
       elements.resultDetails.innerHTML = '<p class="empty-text">暂无题目明细</p>';
       return;
     }
 
     elements.resultDetails.innerHTML = `
       <table class="result-table">
-        <thead><tr><th>学生</th><th>题号</th><th>得分</th><th>等级</th><th>AI 分析</th></tr></thead>
+        <thead><tr><th>学生</th><th>题号</th><th>得分</th><th>状态</th><th>AI 分析</th></tr></thead>
         <tbody>
-          ${results.details.map((row) => `
+          ${(results.details || []).map((row) => `
             <tr>
               <td>${escapeHtml(row.studentName)}</td>
               <td>${escapeHtml(row.questionNo)}</td>
               <td>${row.score ?? "-"} / ${row.maxScore}</td>
               <td>${escapeHtml(row.level || "-")}</td>
               <td>${escapeHtml(row.analysis || "")}</td>
+            </tr>
+          `).join("")}
+          ${failures.map((row) => `
+            <tr class="result-row-error">
+              <td>${escapeHtml(row.studentName)}</td>
+              <td>${escapeHtml(row.questionNo)}</td>
+              <td>- / ${row.maxScore}</td>
+              <td>失败 ${row.attempts}/3</td>
+              <td>${escapeHtml(row.error || "评分失败")}</td>
             </tr>
           `).join("")}
         </tbody>
@@ -303,6 +324,7 @@
     state.exams = payload.exams || [];
     state.batches = payload.batches || [];
     renderCoreSelects();
+    renderMetrics();
     renderStudents();
     renderExams();
     renderBatchSelect();
@@ -310,9 +332,18 @@
     await loadSelectedBatch();
   }
 
-  async function loadSelectedExam() {
-    const examId = elements.templateExamSelect.value || elements.batchExamSelect.value || state.exams[0]?.id || "";
-    if (!examId) {
+  async function loadSelectedExam(examId) {
+    const selectedExamId = examId || elements.templateExamSelect.value || elements.batchExamSelect.value || state.exams[0]?.id || "";
+    if (selectedExamId) {
+      $$('[data-select="exams"]').forEach((select) => {
+        if (Array.from(select.options).some((option) => option.value === selectedExamId)) {
+          select.value = selectedExamId;
+        }
+      });
+    }
+
+    const effectiveExamId = selectedExamId;
+    if (!effectiveExamId) {
       state.questions = [];
       state.templates = [];
       state.currentTemplate = null;
@@ -320,19 +351,21 @@
       renderQuestionSelect();
       renderTemplate();
       renderRegions();
+      renderMetrics();
       return;
     }
 
     const [questionPayload, templatePayload, batchPayload] = await Promise.all([
-      apiRequest(`questions&examId=${encodeURIComponent(examId)}`, { cache: "no-store" }),
-      apiRequest(`templates&examId=${encodeURIComponent(examId)}`, { cache: "no-store" }),
-      apiRequest(`batches&examId=${encodeURIComponent(examId)}`, { cache: "no-store" }),
+      apiRequest(`questions&examId=${encodeURIComponent(effectiveExamId)}`, { cache: "no-store" }),
+      apiRequest(`templates&examId=${encodeURIComponent(effectiveExamId)}`, { cache: "no-store" }),
+      apiRequest(`batches&examId=${encodeURIComponent(effectiveExamId)}`, { cache: "no-store" }),
     ]);
     state.questions = questionPayload.questions || [];
     state.templates = templatePayload.templates || [];
     state.currentTemplate = state.templates[0] || null;
     state.batches = batchPayload.batches || state.batches;
     renderQuestionSelect();
+    renderMetrics();
     renderTemplate();
     renderBatchSelect();
 
@@ -551,7 +584,8 @@
         renderResults(payload.results);
 
         if (payload.done) {
-          setStatus("批量阅卷完成");
+          const failedCount = payload.results?.progress?.failed || 0;
+          setStatus(failedCount ? `批阅结束，${failedCount} 个任务失败` : "批量阅卷完成");
           break;
         }
 
@@ -580,8 +614,17 @@
     bindForm(elements.batchForm, "create-batch");
 
     elements.refreshButton.addEventListener("click", () => loadBootstrap().catch((error) => alert(error.message)));
-    elements.templateExamSelect.addEventListener("change", () => loadSelectedExam().catch((error) => alert(error.message)));
-    elements.batchExamSelect.addEventListener("change", () => loadSelectedExam().catch((error) => alert(error.message)));
+    $$(".setup-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const target = tab.dataset.setupTab;
+        $$(".setup-tab").forEach((item) => item.classList.toggle("is-active", item === tab));
+        $$("[data-setup-panel]").forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.setupPanel === target);
+        });
+      });
+    });
+    elements.templateExamSelect.addEventListener("change", () => loadSelectedExam(elements.templateExamSelect.value).catch((error) => alert(error.message)));
+    elements.batchExamSelect.addEventListener("change", () => loadSelectedExam(elements.batchExamSelect.value).catch((error) => alert(error.message)));
     elements.activeBatchSelect.addEventListener("change", () => loadSelectedBatch().catch((error) => alert(error.message)));
     elements.regionQuestionSelect.addEventListener("change", () => {
       elements.saveRegionButton.disabled = !state.templateSelection || !elements.regionQuestionSelect.value;

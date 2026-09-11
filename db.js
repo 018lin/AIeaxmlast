@@ -1427,6 +1427,28 @@ async function getBatchResults(batchId) {
     `,
     [batchId]
   );
+  const failedResult = await getPool().query(
+    `
+      SELECT
+        j.id,
+        j.error,
+        j.attempts,
+        s.id AS student_id,
+        s.name AS student_name,
+        s.student_no,
+        q.id AS question_id,
+        q.question_no,
+        q.title AS question_title,
+        q.max_score
+      FROM grading_jobs j
+      JOIN answer_crops ac ON ac.id = j.answer_crop_id
+      JOIN students s ON s.id = ac.student_id
+      JOIN exam_questions q ON q.id = ac.question_id
+      WHERE j.batch_id = $1 AND j.status = 'failed'
+      ORDER BY s.student_no ASC, s.name ASC, q.created_at ASC
+    `,
+    [batchId]
+  );
 
   const progress = progressResult.rows[0] || {};
 
@@ -1461,6 +1483,18 @@ async function getBatchResults(batchId) {
       deductions: asJsonArray(row.deductions),
       suggestions: asJsonArray(row.suggestions),
       createdAt: row.created_at,
+    })),
+    failures: failedResult.rows.map((row) => ({
+      id: row.id,
+      studentId: row.student_id,
+      studentName: row.student_name,
+      studentNo: row.student_no,
+      questionId: row.question_id,
+      questionNo: row.question_no,
+      questionTitle: row.question_title,
+      maxScore: Number(row.max_score || 0),
+      attempts: Number(row.attempts || 0),
+      error: row.error,
     })),
   };
 }

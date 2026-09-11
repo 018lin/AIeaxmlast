@@ -45,8 +45,34 @@
             <button class="ghost-button" id="refreshButton" type="button">刷新</button>
           </header>
 
-          <div class="batch-form-grid">
-            <form id="classForm" class="compact-form">
+          <div class="setup-summary">
+            <div class="setup-metric">
+              <span>班级</span>
+              <strong id="classMetric">0</strong>
+            </div>
+            <div class="setup-metric">
+              <span>学生</span>
+              <strong id="studentMetric">0</strong>
+            </div>
+            <div class="setup-metric">
+              <span>考试</span>
+              <strong id="examMetric">0</strong>
+            </div>
+            <div class="setup-metric">
+              <span>题目</span>
+              <strong id="questionMetric">0</strong>
+            </div>
+          </div>
+
+          <div class="setup-tabs" role="tablist" aria-label="基础数据编辑">
+            <button class="setup-tab is-active" type="button" data-setup-tab="class">班级</button>
+            <button class="setup-tab" type="button" data-setup-tab="student">学生</button>
+            <button class="setup-tab" type="button" data-setup-tab="exam">考试</button>
+            <button class="setup-tab" type="button" data-setup-tab="question">题目</button>
+          </div>
+
+          <div class="setup-editor">
+            <form id="classForm" class="compact-form setup-form is-active" data-setup-panel="class">
               <label class="field-control">
                 <span>班级名称</span>
                 <input name="name" placeholder="高一 1 班" required />
@@ -58,7 +84,7 @@
               <button class="primary-button" type="submit">新增班级</button>
             </form>
 
-            <form id="studentForm" class="compact-form">
+            <form id="studentForm" class="compact-form setup-form" data-setup-panel="student">
               <label class="field-control">
                 <span>所属班级</span>
                 <select name="classId" data-select="classes"></select>
@@ -74,7 +100,7 @@
               <button class="primary-button" type="submit">新增学生</button>
             </form>
 
-            <form id="examForm" class="compact-form">
+            <form id="examForm" class="compact-form setup-form" data-setup-panel="exam">
               <label class="field-control">
                 <span>班级</span>
                 <select name="classId" data-select="classes"></select>
@@ -90,7 +116,7 @@
               <button class="primary-button" type="submit">新增考试</button>
             </form>
 
-            <form id="questionForm" class="compact-form compact-form-wide">
+            <form id="questionForm" class="compact-form setup-form setup-form-question" data-setup-panel="question">
               <label class="field-control">
                 <span>考试</span>
                 <select name="examId" data-select="exams"></select>
@@ -107,11 +133,11 @@
                 <span>知识点</span>
                 <input name="knowledgePoints" placeholder="函数, 单调性" />
               </label>
-              <label class="field-control field-span-2">
+              <label class="field-control">
                 <span>题目说明</span>
-                <input name="title" placeholder="可填题干摘要，帮助 AI 理解题目" />
+                <input name="title" placeholder="题干摘要" />
               </label>
-              <label class="field-control field-span-2">
+              <label class="field-control">
                 <span>评分标准</span>
                 <textarea name="rubric" rows="3" placeholder="步骤分、结论分、扣分规则"></textarea>
               </label>
