@@ -224,24 +224,6 @@ button {
   font-weight: 500;
 }
 
-.arrow {
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  color: var(--orange);
-}
-
-.arrow svg {
-  width: 27px;
-  height: 27px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .status-pill {
   justify-self: end;
   display: inline-flex;
@@ -351,14 +333,9 @@ button {
     grid-template-columns: 54px minmax(0, 1fr);
   }
 
-  .arrow,
   .status-pill {
     grid-column: 2;
     justify-self: start;
-  }
-
-  .arrow {
-    display: none;
   }
 }
 
@@ -410,6 +387,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 14px;
+  margin-right: auto;
   color: var(--orange-strong);
   font-size: 24px;
   font-weight: 900;
@@ -419,7 +397,6 @@ button {
 .back-link {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   min-height: 42px;
   padding: 0 16px;
   border: 1px solid rgba(240, 220, 201, 0.95);
@@ -439,25 +416,6 @@ button {
   outline: none;
 }
 
-.back-link svg {
-  width: 19px;
-  height: 19px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.console-hero {
-  width: min(100%, 1320px);
-  margin: clamp(72px, 9vh, 112px) auto 42px;
-}
-
-.console-hero > div {
-  max-width: 760px;
-}
-
 .console-kicker {
   margin: 0 0 16px;
   color: var(--orange-strong);
@@ -465,21 +423,14 @@ button {
   font-weight: 900;
 }
 
-.console-hero h1 {
-  margin: 0;
-  color: #111c2f;
-  font-size: clamp(44px, 5vw, 68px);
-  line-height: 1.12;
-  font-weight: 900;
-  letter-spacing: 0;
+.console-shell-modules {
+  display: flex;
+  flex-direction: column;
 }
 
-.console-hero p:not(.console-kicker) {
-  margin: 20px 0 0;
-  color: #647084;
-  font-size: clamp(19px, 1.7vw, 24px);
-  line-height: 1.55;
-  font-weight: 500;
+.console-shell-modules .module-grid {
+  margin-block: auto;
+  padding-block: clamp(20px, 4vh, 52px);
 }
 
 .module-grid {
@@ -491,7 +442,7 @@ button {
 }
 
 .module-card {
-  min-height: 310px;
+  min-height: clamp(240px, 26vh, 300px);
   display: grid;
   grid-template-rows: auto 1fr auto;
   align-content: start;
@@ -533,8 +484,7 @@ button {
   background: #fff;
 }
 
-.module-card-locked .module-copy strong,
-.module-card-locked .module-copy span {
+.module-card-locked .module-copy strong {
   color: #9ca6b6;
 }
 
@@ -560,7 +510,6 @@ button {
 
 .module-copy {
   display: grid;
-  gap: 16px;
 }
 
 .module-copy strong {
@@ -570,19 +519,10 @@ button {
   font-weight: 900;
 }
 
-.module-copy span {
-  max-width: 510px;
-  color: #5d687a;
-  font-size: 18px;
-  line-height: 1.65;
-  font-weight: 500;
-}
-
 .module-action {
   display: inline-flex;
   align-items: center;
   justify-self: start;
-  gap: 10px;
   min-height: 44px;
   padding: 0 18px;
   border-radius: 999px;
@@ -599,16 +539,6 @@ button {
   box-shadow: none;
 }
 
-.module-action svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 @media (max-width: 900px) {
   .console-shell {
     padding: 26px 18px 44px;
@@ -620,10 +550,6 @@ button {
 
   .console-brand {
     font-size: 21px;
-  }
-
-  .console-hero {
-    margin-top: 54px;
   }
 
   .module-grid {
@@ -643,18 +569,6 @@ button {
     font-size: 14px;
   }
 
-  .console-hero {
-    margin: 44px auto 28px;
-  }
-
-  .console-hero h1 {
-    font-size: 38px;
-  }
-
-  .console-hero p:not(.console-kicker) {
-    font-size: 17px;
-  }
-
   .module-card {
     min-height: 260px;
     gap: 22px;
@@ -671,10 +585,6 @@ button {
   .module-icon svg {
     width: 36px;
     height: 36px;
-  }
-
-  .module-copy span {
-    font-size: 16px;
   }
 }
 

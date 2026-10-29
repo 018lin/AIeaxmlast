@@ -129,7 +129,6 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
   min-height: 58px;
   border: 0;
   border-radius: 16px;
@@ -152,16 +151,6 @@
   background: #f6a06f;
   box-shadow: none;
   cursor: wait;
-}
-
-.login-submit svg {
-  width: 21px;
-  height: 21px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .topbar-actions {
@@ -764,12 +753,17 @@
   }
 
   .console-brand {
-    grid-column: 1;
+    grid-column: 2;
     grid-row: 1;
+    justify-self: start;
     gap: 9px;
     min-width: 0;
     font-size: 16px;
     white-space: nowrap;
+  }
+
+  .console-topbar > .console-brand:first-child {
+    grid-column: 1;
   }
 
   .console-brand .logo-box {
@@ -784,9 +778,9 @@
   }
 
   .back-link {
-    grid-column: 2;
+    grid-column: 1;
     grid-row: 1;
-    justify-self: end;
+    justify-self: start;
     min-height: 38px;
     padding: 0 12px;
     font-size: 14px;
@@ -887,28 +881,9 @@
     padding: 22px 16px 40px;
   }
 
-  .console-hero {
-    margin: 34px auto 22px;
-  }
-
-  .console-hero > div {
-    max-width: none;
-  }
-
   .console-kicker {
     margin-bottom: 10px;
     font-size: 15px;
-  }
-
-  .console-hero h1 {
-    font-size: clamp(30px, 8.6vw, 38px);
-    line-height: 1.2;
-  }
-
-  .console-hero p:not(.console-kicker) {
-    margin-top: 14px;
-    font-size: 15.5px;
-    line-height: 1.65;
   }
 
   .module-grid {
@@ -933,19 +908,9 @@
     height: 30px;
   }
 
-  .module-copy {
-    gap: 10px;
-  }
-
   .module-copy strong {
     font-size: clamp(24px, 6.6vw, 30px);
     line-height: 1.25;
-  }
-
-  .module-copy span {
-    max-width: none;
-    font-size: 15px;
-    line-height: 1.68;
   }
 
   .module-action {
@@ -984,11 +949,7 @@
   }
 
   .back-link {
-    padding: 0 10px;
-  }
-
-  .back-link-text {
-    display: none;
+    padding: 0 12px;
   }
 }
 

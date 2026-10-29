@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>教师控制台 - AI数智作业平台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261029-auth" />
-    <link rel="stylesheet" href="./shell.css?v=20261029-mobile" />
+    <link rel="stylesheet" href="./styles.css?v=20261029-topbar" />
+    <link rel="stylesheet" href="./shell.css?v=20261029-topbar" />
     <script src="./auth.js"></script>
     <script>window.AppAuth.requireAuth();</script>
   </head>
   <body>
-    <main class="console-shell" aria-labelledby="console-title">
+    <main class="console-shell console-shell-modules" aria-label="教师控制台">
       <header class="console-topbar">
         <a class="console-brand" href="./teacher.html" aria-label="教师控制台首页">
           <span class="logo-box" aria-hidden="true">
@@ -25,14 +25,6 @@
         <div class="topbar-actions" data-topbar-actions></div>
       </header>
 
-      <section class="console-hero">
-        <div>
-          <p class="console-kicker">教师控制台</p>
-          <h1 id="console-title">请选择工作模块</h1>
-          <p>从作业名单导入、逐生拍照批改到本次与历史学情分析，进入对应工作台。</p>
-        </div>
-      </section>
-
       <section class="module-grid" aria-label="教师功能模块">
         <a class="module-card module-card-primary" href="./homework.html" aria-label="进入作业批改与学情分析">
           <span class="module-icon" aria-hidden="true">
@@ -45,13 +37,9 @@
           </span>
           <span class="module-copy">
             <strong>作业批改与学情分析</strong>
-            <span>导入 Excel 学生名单，逐生拍照或扫描由 AI 逐题批改；支持单题即时批改，并自动生成本次与历史学情分析。</span>
           </span>
           <span class="module-action">
             进入
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 12h13M13 6l6 6-6 6" />
-            </svg>
           </span>
         </a>
 
@@ -65,13 +53,9 @@
           </span>
           <span class="module-copy">
             <strong>批量阅卷 MVP</strong>
-            <span>管理班级、学生、考试、模板和扫描批次，按题裁切并逐题调用 AI 批阅。</span>
           </span>
           <span class="module-action">
             进入
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 12h13M13 6l6 6-6 6" />
-            </svg>
           </span>
         </a>
       </section>
