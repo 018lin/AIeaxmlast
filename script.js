@@ -1,18 +1,8 @@
-const roleButtons = document.querySelectorAll(".role-option[data-role]");
-
-roleButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    roleButtons.forEach((item) => item.classList.remove("is-active"));
-    button.classList.add("is-active");
-
-    const role = button.dataset.role;
-    document.documentElement.dataset.selectedRole = role;
-
-    if (role === "teacher") {
-      window.location.href = "./teacher.html";
-    }
+document
+  .querySelector(".role-option[data-role='teacher']")
+  ?.addEventListener("click", () => {
+    window.location.href = "./teacher.html";
   });
-});
 
 const gradingRoot = document.querySelector(".grading-shell:not(.ai-review-shell)");
 
