@@ -3,8 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI数智作业平台</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <title>教师登录 - AI数智作业平台</title>
+    <link rel="stylesheet" href="./styles.css?v=20261029-auth" />
+    <link rel="stylesheet" href="./shell.css?v=20261029-auth" />
+    <script src="./auth.js"></script>
   </head>
   <body>
     <main class="page-shell" aria-labelledby="page-title">
@@ -23,33 +25,70 @@
           <h1 id="page-title">让学习更高效，<br />让成长更简单</h1>
           <p>专为师生打造的现代化智慧教学空间</p>
         </div>
+
+        <ul class="login-features" aria-label="平台能力">
+          <li>
+            <span aria-hidden="true">01</span>
+            <strong>名单一次导入</strong>
+            <small>按班级管理学生，批改时自动使用默认班级。</small>
+          </li>
+          <li>
+            <span aria-hidden="true">02</span>
+            <strong>逐题 AI 批改</strong>
+            <small>拍照或扫描答卷，自动判对错并生成学情分析。</small>
+          </li>
+          <li>
+            <span aria-hidden="true">03</span>
+            <strong>历史学情沉淀</strong>
+            <small>按知识点和题型回顾班级与学生的掌握变化。</small>
+          </li>
+        </ul>
       </section>
 
-      <section class="login-card" aria-label="教师工作台入口">
+      <section class="login-card login-card-auth" aria-label="教师登录">
         <header>
-          <h2>教师工作台</h2>
-          <p>进入教学管理与批改工作台</p>
+          <h2>教师登录</h2>
+          <p>请输入教师账号与密码后进入控制台</p>
         </header>
 
-        <div class="role-list">
-          <button class="role-option is-active" type="button" data-role="teacher">
-            <span class="icon-box" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img">
-                <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
-                <path d="M7.3 9.4h2.9M7.3 12.3h2.9M13.8 9.4h2.9M13.8 12.3h2.9" />
-              </svg>
+        <form class="login-form" id="loginForm" novalidate>
+          <label class="login-field">
+            <span>教师账号</span>
+            <input
+              name="account"
+              type="text"
+              inputmode="numeric"
+              autocomplete="username"
+              placeholder="请输入教师账号"
+              required
+            />
+          </label>
+
+          <label class="login-field">
+            <span>登录密码</span>
+            <span class="password-wrap">
+              <input
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="请输入登录密码"
+                required
+              />
+              <button class="password-toggle" id="passwordToggle" type="button" aria-label="显示密码">显示</button>
             </span>
-            <span class="role-copy">
-              <strong>教师</strong>
-              <span>进入教学管理与批改工作台</span>
-            </span>
-            <span class="arrow" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img">
-                <path d="M5 12h13M13 6l6 6-6 6" />
-              </svg>
-            </span>
+          </label>
+
+          <p class="login-error" id="loginError" role="alert" hidden></p>
+
+          <button class="login-submit" type="submit">
+            <span>进入教师控制台</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h13M13 6l6 6-6 6" />
+            </svg>
           </button>
-        </div>
+
+          <p class="login-hint">测试账号：018　密码：018018</p>
+        </form>
       </section>
     </main>
 

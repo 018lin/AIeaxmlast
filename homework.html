@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>作业批改与学情分析 - AI数智作业平台</title>
+    <link rel="stylesheet" href="./styles.css?v=20261029-homework" />
+    <link rel="stylesheet" href="./homework.css?v=20261029-merge4" />
+    <link rel="stylesheet" href="./shell.css?v=20261029-auth" />
+    <script src="./auth.js"></script>
+    <script>window.AppAuth.requireAuth();</script>
+  </head>
+  <body>
+    <main class="grading-shell batch-shell homework-shell" aria-labelledby="homework-title">
+      <header class="console-topbar">
+        <a class="console-brand" href="./teacher.html" aria-label="返回教师控制台">
+          <span class="logo-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
+              <path d="M7.2 9.3h3.2M7.2 12.5h3.2M13.6 9.3h3.2M13.6 12.5h3.2" />
+            </svg>
+          </span>
+          <span>AI数智作业平台</span>
+        </a>
+
+        <div class="topbar-actions">
+          <a class="back-link" href="./teacher.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M19 12H5M11 6l-6 6 6 6" />
+            </svg>
+            控制台
+          </a>
+          <div class="topbar-actions-mount" data-topbar-actions></div>
+        </div>
+      </header>
+
+      <section class="grading-header">
+        <div>
+          <p class="console-kicker">作业批改与学情分析</p>
+          <h1 id="homework-title">导入名单、拍照批改、查看学情</h1>
+          <p>先导入全班学生名单并设置作业题目与知识点，再逐个学生拍照或扫描批改，AI 自动判对错；全部完成后生成本次与历史学情分析。临时单题也可直接上传快速批改。</p>
+        </div>
+      </section>
+
+      <nav class="hw-tabs" aria-label="作业工作流">
+        <button class="hw-tab is-active" type="button" data-view="setup">
+          <span>1</span>
+          作业设置
+        </button>
+        <button class="hw-tab" type="button" data-view="work">
+          <span>2</span>
+          学生作业
+        </button>
+        <button class="hw-tab" type="button" data-view="analysis">
+          <span>3</span>
+          学情分析
+        </button>
+        <button class="hw-tab" type="button" data-view="quick">
+          <span>4</span>
+          单题 AI 批改
+        </button>
+      </nav>
+
+      <section class="hw-view is-active" data-view-panel="setup">
+        <div class="hw-grid">
+          <article class="batch-panel">
+            <header>
+              <div>
+                <h2>班级与学生</h2>
+                <p>导入 Excel 学生名单，系统会按班级展示所有学生。</p>
+              </div>
+              <button class="ghost-button" id="hwRefreshButton" type="button">刷新</button>
+            </header>
+
+            <div class="hw-panel-body">
+              <form id="hwClassForm" class="compact-form">
+                <label class="field-control">
+                  <span>班级名称</span>
+                  <input name="name" placeholder="高一 1 班" required />
+                </label>
+                <label class="field-control">
+                  <span>年级</span>
+                  <input name="grade" placeholder="高一" />
+                </label>
+                <button class="primary-button" type="submit">新增班级</button>
+              </form>
+
+              <form id="hwImportForm" class="compact-form hw-import-form">
+                <label class="field-control">
+                  <span>导入到已有班级</span>
+                  <select name="classId" id="importClassSelect" data-select="classes" data-optional="true"></select>
+                </label>
+                <label class="field-control">
+                  <span>或新建班级</span>
+                  <input name="className" placeholder="例如：高一 2 班" />
+                </label>
+                <label class="field-control">
+                  <span>新班级年级</span>
+                  <input name="grade" placeholder="高一" />
+                </label>
+                <label class="upload-tile compact-upload hw-file-tile" for="hwImportFile">
+                  <input id="hwImportFile" type="file" accept=".xlsx,.xls,.csv" />
+                  <span class="upload-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img">
+                      <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
+                      <path d="M14 3.8v5h5M9.5 14h5M9.5 17h3" />
+                    </svg>
+                  </span>
+                  <span>
+                    <strong>选择 Excel 名单</strong>
+                    <small id="hwImportFileName">支持 .xlsx、.xls、.csv</small>
+                  </span>
+                </label>
+                <button class="primary-button" type="submit">导入学生名单</button>
+              </form>
+              <p class="hw-hint">Excel 表头需包含“姓名”，可选“学号”。重复的学生会自动跳过。</p>
+
+              <div class="hw-section-title">班级列表</div>
+              <div id="hwClassList" class="mini-list horizontal-list"></div>
+
+              <div class="hw-section-title">
+                学生名单
+                <span id="hwStudentCount" class="hw-count">0 人</span>
+              </div>
+              <div id="hwStudentList" class="student-roster"></div>
+            </div>
+          </article>
+
+          <article class="batch-panel">
+            <header>
+              <div>
+                <h2>作业与题目</h2>
+                <p>录入题目时先填写知识点和题型，学情分析会按它们聚合。</p>
+              </div>
+            </header>
+
+            <div class="hw-panel-body">
+              <form id="hwExamForm" class="compact-form">
+                <label class="field-control">
+                  <span>所属班级</span>
+                  <select name="classId" data-select="classes"></select>
+                </label>
+                <label class="field-control">
+                  <span>作业名称</span>
+                  <input name="name" placeholder="第 3 次作业" required />
+                </label>
+                <label class="field-control">
+                  <span>科目</span>
+                  <input name="subject" placeholder="数学" />
+                </label>
+                <label class="field-control">
+                  <span>日期</span>
+                  <input name="examDate" type="date" />
+                </label>
+                <button class="primary-button" type="submit">新建作业</button>
+              </form>
+
+              <div class="hw-section-title">作业列表</div>
+              <div id="hwExamList" class="mini-list"></div>
+
+              <div class="hw-section-title">题目与知识点</div>
+              <form id="hwQuestionForm" class="compact-form hw-question-form">
+                <label class="field-control">
+                  <span>所属作业</span>
+                  <select name="examId" data-select="exams"></select>
+                </label>
+                <label class="field-control">
+                  <span>题号</span>
+                  <input name="questionNo" placeholder="第 1 题" required />
+                </label>
+                <label class="field-control">
+                  <span>题型</span>
+                  <input name="questionType" placeholder="选择题 / 填空题 / 解答题" />
+                </label>
+                <label class="field-control">
+                  <span>满分</span>
+                  <input name="maxScore" type="number" min="0.5" step="0.5" value="10" required />
+                </label>
+                <label class="field-control field-span-2">
+                  <span>知识点（逗号分隔）</span>
+                  <input name="knowledgePoints" placeholder="函数, 单调性" />
+                </label>
+                <label class="field-control field-span-2">
+                  <span>题目说明</span>
+                  <input name="title" placeholder="题干摘要" />
+                </label>
+                <label class="field-control field-span-2">
+                  <span>评分标准</span>
+                  <textarea name="rubric" rows="3" placeholder="步骤分、结论分、扣分规则"></textarea>
+                </label>
+                <button class="primary-button" type="submit">添加题目</button>
+              </form>
+              <div id="hwQuestionList" class="mini-list horizontal-list"></div>
+            </div>
+          </article>
+        </div>
+
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>试卷模板与题目区域</h2>
+              <p>上传标准作业图片，选择题目后在图片上拖拽框选作答区域。批改时按此区域自动裁题。</p>
+            </div>
+          </header>
+
+          <div class="template-toolbar">
+            <label class="field-control">
+              <span>作业</span>
+              <select id="hwTemplateExamSelect" data-select="exams"></select>
+            </label>
+            <label class="upload-tile compact-upload" for="hwTemplateUpload">
+              <input id="hwTemplateUpload" type="file" accept="image/*" />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                  <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
+                  <path d="M14 3.8v5h5M9.5 14h5M9.5 17h3" />
+                </svg>
+              </span>
+              <span>
+                <strong>上传模板</strong>
+                <small id="hwTemplateFileName">支持 PNG、JPG、WEBP</small>
+              </span>
+            </label>
+            <label class="field-control">
+              <span>框选题目</span>
+              <select id="hwRegionQuestionSelect"></select>
+            </label>
+            <button class="primary-button" id="hwSaveRegionButton" type="button" disabled>保存区域</button>
+          </div>
+
+          <div class="template-stage" id="hwTemplateStage">
+            <img id="hwTemplateImage" alt="作业模板预览" />
+            <div class="crop-empty">请选择作业并上传模板</div>
+          </div>
+          <div id="hwRegionList" class="mini-list horizontal-list"></div>
+        </article>
+      </section>
+
+      <section class="hw-view" data-view-panel="work" hidden>
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>学生作业</h2>
+              <p>点击学生姓名进入拍照或扫描批改，系统会为每个学生单独给出每题对错。</p>
+            </div>
+            <div class="hw-inline-controls">
+              <select id="workExamSelect" data-select="exams"></select>
+              <button class="ghost-button" id="workRefreshButton" type="button">刷新</button>
+            </div>
+          </header>
+          <div class="hw-panel-body">
+            <div id="workSummary" class="hw-metrics"></div>
+            <div class="hw-section-title">学生名单</div>
+            <div id="studentCardGrid" class="student-card-grid"></div>
+          </div>
+        </article>
+
+        <article class="batch-panel" id="studentWorkPanel" hidden>
+          <header>
+            <div>
+              <h2 id="workStudentName">学生作业</h2>
+              <p id="workStudentMeta"></p>
+            </div>
+            <button class="ghost-button" id="closeWorkPanel" type="button">收起</button>
+          </header>
+          <div class="hw-panel-body">
+            <div class="hw-capture-grid">
+              <div class="hw-capture-card">
+                <div class="hw-capture-actions">
+                  <button class="primary-button" id="cameraButton" type="button">拍照上传</button>
+                  <label class="upload-tile compact-upload" for="workImageInput">
+                    <input id="workImageInput" type="file" accept="image/*" capture="environment" />
+                    <span class="upload-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" role="img">
+                        <path d="M6 4.5h9l3 3v12H6v-15Z" />
+                        <path d="M15 4.5v3h3M9 11h6M9 14.5h6M9 18h3" />
+                      </svg>
+                    </span>
+                    <span>
+                      <strong>扫描 / 上传</strong>
+                      <small>选择作业图片文件</small>
+                    </span>
+                  </label>
+                </div>
+                <div class="hw-preview" id="workPreviewWrap">
+                  <span>尚未选择作业图片</span>
+                  <img id="workPreview" alt="学生作业预览" hidden />
+                </div>
+                <div class="hw-action-row">
+                  <button class="primary-button" id="gradeStudentButton" type="button" disabled>开始批改</button>
+                  <span class="hw-status-text" id="workStatusText">等待上传作业图片</span>
+                </div>
+              </div>
+              <div class="hw-result-area" id="studentResultArea">
+                <p class="empty-text">批改后在这里查看每题对错和 AI 分析。</p>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="hw-view" data-view-panel="analysis" hidden>
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>本次作业学情分析</h2>
+              <p>统计每题错误人数与错误学生、知识点掌握情况，并可让 AI 归纳可能错因。</p>
+            </div>
+            <div class="hw-inline-controls">
+              <select id="analysisExamSelect" data-select="exams"></select>
+              <button class="ghost-button" id="loadAnalysisButton" type="button">刷新分析</button>
+            </div>
+          </header>
+          <div class="hw-panel-body" id="assignmentAnalysis">
+            <p class="empty-text">完成学生批改后，这里会展示本次作业的学情分析。</p>
+          </div>
+        </article>
+
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>历史作业分析</h2>
+              <p>跨多次作业分析单个学生或全班的知识点、题型掌握情况。</p>
+            </div>
+          </header>
+          <div class="hw-panel-body">
+            <div class="hw-history-controls">
+              <label><input type="radio" name="historyMode" value="student" checked /> 单个学生</label>
+              <label><input type="radio" name="historyMode" value="class" /> 全班学生</label>
+              <select id="historyClassSelect" data-select="classes"></select>
+              <select id="historyStudentSelect"></select>
+              <button class="primary-button" id="loadHistoryButton" type="button">开始分析</button>
+            </div>
+            <div id="historyAnalysis">
+              <p class="empty-text">选择单个学生或全班，查看历史知识点与题型掌握情况。</p>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="hw-view" data-view-panel="quick" hidden>
+        <article class="batch-panel">
+          <header>
+            <div>
+              <h2>单题 AI 批改</h2>
+              <p>上传一道试题和该生作答，AI 给出评分、扣分点与改进建议，结果自动保存到批改历史。</p>
+            </div>
+          </header>
+          <div class="hw-panel-body">
+            <div class="hw-capture-grid">
+              <div class="hw-capture-card">
+                <div class="hw-section-title">试题与作答</div>
+                <div class="quick-upload-row">
+                  <label class="upload-tile compact-upload" for="quickQuestionUpload">
+                    <input id="quickQuestionUpload" type="file" accept="image/*" />
+                    <span class="upload-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" role="img">
+                        <path d="M5.5 4.5h13v15h-13v-15Z" />
+                        <path d="M8.5 8h7M8.5 11.5h5.5M8.5 15h3.5" />
+                      </svg>
+                    </span>
+                    <span>
+                      <strong>上传试题</strong>
+                      <small id="quickQuestionFileName">支持 PNG、JPG</small>
+                    </span>
+                  </label>
+                  <label class="upload-tile compact-upload" for="quickAnswerUpload">
+                    <input id="quickAnswerUpload" type="file" accept="image/*" capture="environment" />
+                    <span class="upload-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" role="img">
+                        <path d="M6 4.5h9l3 3v12H6v-15Z" />
+                        <path d="M15 4.5v3h3M9 11h6M9 14.5h6M9 18h3" />
+                      </svg>
+                    </span>
+                    <span>
+                      <strong>上传学生作答</strong>
+                      <small id="quickAnswerFileName">支持 PNG、JPG</small>
+                    </span>
+                  </label>
+                </div>
+                <div class="quick-preview-row">
+                  <div class="selected-preview" id="quickQuestionPreview">
+                    <p class="empty-text">尚未选择题图</p>
+                  </div>
+                  <div class="selected-preview" id="quickAnswerPreview">
+                    <p class="empty-text">尚未选择作答图</p>
+                  </div>
+                </div>
+                <div class="quick-settings">
+                  <label class="field-control">
+                    <span>满分</span>
+                    <input id="quickMaxScore" type="number" min="0.5" step="0.5" value="10" />
+                  </label>
+                  <label class="field-control">
+                    <span>评分标准</span>
+                    <textarea
+                      id="quickRubric"
+                      rows="3"
+                      placeholder="例如：步骤完整 4 分，关键结论 4 分，书写规范 2 分。"
+                    ></textarea>
+                  </label>
+                </div>
+                <div class="hw-action-row">
+                  <button class="primary-button" id="quickGradeButton" type="button" disabled>开始 AI 批改</button>
+                  <span class="hw-status-text" id="quickStatusText">请上传试题与学生作答</span>
+                </div>
+              </div>
+              <div class="hw-result-area" id="quickResultArea">
+                <p class="empty-text">批改后这里会显示 AI 评分与点评。</p>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <div class="camera-modal" id="cameraModal" hidden>
+      <div class="camera-dialog">
+        <header>
+          <h3>拍摄学生作业</h3>
+          <button class="ghost-button" id="closeCameraButton" type="button">关闭</button>
+        </header>
+        <video id="cameraVideo" autoplay playsinline muted></video>
+        <div class="camera-actions">
+          <button class="primary-button" id="captureButton" type="button">拍摄并选用</button>
+          <span id="cameraHint">请将作业完整放入画面</span>
+        </div>
+      </div>
+    </div>
+    <canvas id="captureCanvas" hidden></canvas>
+
+    <script src="./shell.js?v=20261029-auth"></script>
+    <script src="./homework.js?v=20261029-merge4"></script>
+  </body>
+</html>

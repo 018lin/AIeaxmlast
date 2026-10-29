@@ -3,6 +3,10 @@ const path = require("path");
 const { randomUUID } = require("crypto");
 const { Pool } = require("pg");
 const sharp = require("sharp");
+const XLSX = require("xlsx");
+
+const MASTERY_MASTERED = 0.85;
+const MASTERY_DEVELOPING = 0.45;
 
 let pool;
 
@@ -427,6 +431,7 @@ function mapQuestion(row) {
     maxScore: Number(row.max_score || 0),
     rubric: row.rubric,
     knowledgePoints: asJsonArray(row.knowledge_points),
+    questionType: row.question_type || "",
     createdAt: row.created_at,
   };
 }
@@ -552,8 +557,8 @@ async function listStudents(classId) {
       FROM students s
       LEFT JOIN classes c ON c.id = s.class_id
       ${whereClause}
-      ORDER BY s.created_at DESC
-      LIMIT 500
+      ORDER BY s.student_no ASC NULLS LAST, s.name ASC, s.created_at ASC
+      LIMIT 1000
     `,
     values
   );
@@ -634,9 +639,11 @@ async function createExamQuestion(payload) {
 
   const result = await getPool().query(
     `
-      INSERT INTO exam_questions (id, exam_id, question_no, title, max_score, rubric, knowledge_points)
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      RETURNING id, exam_id, question_no, title, max_score, rubric, knowledge_points, created_at
+      INSERT INTO exam_questions (
+        id, exam_id, question_no, title, max_score, rubric, knowledge_points, question_type
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+      RETURNING id, exam_id, question_no, title, max_score, rubric, knowledge_points, question_type, created_at
     `,
     [
       randomUUID(),
@@ -646,6 +653,7 @@ async function createExamQuestion(payload) {
       maxScore,
       String(payload.rubric || "").trim(),
       JSON.stringify(knowledgePoints),
+      String(payload.questionType || "").trim(),
     ]
   );
 
@@ -675,7 +683,7 @@ async function listExamQuestions(examId) {
 
   const result = await getPool().query(
     `
-      SELECT id, exam_id, question_no, title, max_score, rubric, knowledge_points, created_at
+      SELECT id, exam_id, question_no, title, max_score, rubric, knowledge_points, question_type, created_at
       FROM exam_questions
       WHERE exam_id = $1
       ORDER BY created_at ASC
@@ -966,6 +974,1547 @@ async function listScannedPages(batchId) {
   }));
 }
 
+function normalizeCell(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value).replace(/\u00a0/g, " ").trim();
+}
+
+function normalizeHeader(value) {
+  return normalizeCell(value).toLowerCase().replace(/\s+/g, "");
+}
+
+const STUDENT_NAME_HEADERS = ["姓名", "学生姓名", "学生名字", "名字", "学生", "name", "studentname", "student"];
+const STUDENT_NO_HEADERS = ["学号", "学生学号", "编号", "序号", "学籍号", "studentno", "studentid", "no", "id"];
+
+function findHeaderIndex(headers, candidates) {
+  return headers.findIndex((header) => candidates.includes(header));
+}
+
+function parseImportDataUrl(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;,]*)(;base64)?,(.*)$/s);
+
+  if (!match) {
+    throw new Error("请上传 Excel 文件。");
+  }
+
+  const mimeType = match[1] || "application/octet-stream";
+  const buffer = match[2]
+    ? Buffer.from(match[3], "base64")
+    : Buffer.from(decodeURIComponent(match[3]), "utf8");
+
+  if (!buffer.length) {
+    throw new Error("Excel 文件内容为空。");
+  }
+
+  return { mimeType, buffer };
+}
+
+function parseStudentRowsFromWorkbook(buffer, mimeType) {
+  const isCsv = mimeType.includes("csv");
+  const workbook = isCsv
+    ? XLSX.read(buffer.toString("utf8"), { type: "string" })
+    : XLSX.read(buffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames[0];
+
+  if (!sheetName) {
+    throw new Error("Excel 文件中没有可读取的工作表。");
+  }
+
+  const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+    header: 1,
+    blankrows: false,
+    defval: "",
+  });
+  const rows = matrix
+    .map((row) => (Array.isArray(row) ? row.map(normalizeCell) : []))
+    .filter((row) => row.some(Boolean));
+
+  if (!rows.length) {
+    throw new Error("Excel 文件中没有学生数据。");
+  }
+
+  let headerRowIndex = -1;
+  let nameIndex = 0;
+  let noIndex = -1;
+
+  for (let index = 0; index < Math.min(rows.length, 8); index += 1) {
+    const headers = rows[index].map(normalizeHeader);
+    const candidateNameIndex = findHeaderIndex(headers, STUDENT_NAME_HEADERS);
+
+    if (candidateNameIndex !== -1) {
+      headerRowIndex = index;
+      nameIndex = candidateNameIndex;
+      noIndex = findHeaderIndex(headers, STUDENT_NO_HEADERS);
+      break;
+    }
+  }
+
+  if (headerRowIndex === -1) {
+    const firstRowHeaders = rows[0].map(normalizeHeader);
+    headerRowIndex = findHeaderIndex(firstRowHeaders, STUDENT_NAME_HEADERS) !== -1 ? 0 : -1;
+    noIndex = 1;
+  }
+
+  const dataRows = rows.slice(headerRowIndex + 1);
+  const students = [];
+  const seen = new Set();
+
+  dataRows.forEach((row) => {
+    const name = normalizeCell(row[nameIndex]);
+    const studentNo = noIndex >= 0 ? normalizeCell(row[noIndex]) : "";
+
+    if (!name || name.length > 40 || STUDENT_NAME_HEADERS.includes(normalizeHeader(name))) {
+      return;
+    }
+
+    const key = `${name}|${studentNo}`;
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    students.push({ name, studentNo });
+  });
+
+  if (!students.length) {
+    throw new Error("没有识别到学生姓名，请确认表头包含“姓名”列。");
+  }
+
+  return students;
+}
+
+async function getClassRecord(classId) {
+  const result = await getPool().query(
+    "SELECT id, name, grade, created_at FROM classes WHERE id = $1",
+    [classId]
+  );
+
+  if (result.rowCount === 0) {
+    throw new Error("班级不存在。");
+  }
+
+  return mapClass(result.rows[0]);
+}
+
+async function getExamRecord(examId) {
+  const result = await getPool().query(
+    `
+      SELECT
+        e.id,
+        e.class_id,
+        c.name AS class_name,
+        e.name,
+        e.subject,
+        e.exam_date,
+        e.total_score,
+        e.created_at,
+        COUNT(q.id) AS question_count
+      FROM exams e
+      LEFT JOIN classes c ON c.id = e.class_id
+      LEFT JOIN exam_questions q ON q.exam_id = e.id
+      WHERE e.id = $1
+      GROUP BY e.id, c.name
+    `,
+    [examId]
+  );
+
+  if (result.rowCount === 0) {
+    throw new Error("作业不存在。");
+  }
+
+  return mapExam(result.rows[0]);
+}
+
+async function importStudents(payload) {
+  const file = payload.file || payload.excel || "";
+
+  if (!file) {
+    throw new Error("请上传包含学生名单的 Excel 文件。");
+  }
+
+  let classItem;
+
+  if (payload.classId) {
+    classItem = await getClassRecord(payload.classId);
+  } else {
+    const className = String(payload.className || "").trim();
+
+    if (!className) {
+      throw new Error("请选择已有班级，或填写新班级名称。");
+    }
+
+    classItem = await createClass({ name: className, grade: payload.grade });
+  }
+
+  const { mimeType, buffer } = parseImportDataUrl(file);
+
+  if (buffer.length > 8 * 1024 * 1024) {
+    throw new Error("Excel 文件过大，请控制在 8MB 以内。");
+  }
+
+  const rows = parseStudentRowsFromWorkbook(buffer, mimeType);
+  const existingResult = await getPool().query(
+    "SELECT name, student_no FROM students WHERE class_id = $1",
+    [classItem.id]
+  );
+  const existingKeys = new Set(
+    existingResult.rows.map((row) => `${normalizeCell(row.name)}|${normalizeCell(row.student_no)}`)
+  );
+  const client = await getPool().connect();
+  let created = 0;
+  let skipped = 0;
+
+  try {
+    await client.query("BEGIN");
+
+    for (const row of rows) {
+      const key = `${row.name}|${row.studentNo}`;
+
+      if (existingKeys.has(key)) {
+        skipped += 1;
+        continue;
+      }
+
+      await client.query(
+        `
+          INSERT INTO students (id, class_id, name, student_no)
+          VALUES ($1, $2, $3, $4)
+        `,
+        [randomUUID(), classItem.id, row.name, row.studentNo]
+      );
+      existingKeys.add(key);
+      created += 1;
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return {
+    classItem,
+    created,
+    skipped,
+    total: rows.length,
+    students: await listStudents(classItem.id),
+  };
+}
+
+function classifyMastery(rate) {
+  if (!Number.isFinite(rate)) {
+    return { code: "none", label: "暂无数据" };
+  }
+
+  if (rate >= MASTERY_MASTERED) {
+    return { code: "mastered", label: "完全掌握" };
+  }
+
+  if (rate >= MASTERY_DEVELOPING) {
+    return { code: "developing", label: "尚未熟练掌握" };
+  }
+
+  return { code: "weak", label: "完全不会" };
+}
+
+function roundRate(value) {
+  return Number.isFinite(value) ? Math.round(value * 1000) / 1000 : 0;
+}
+
+function toBucketItem(stats, classification) {
+  return {
+    name: stats.name,
+    attempts: stats.attempts,
+    questionCount: stats.questionIds ? stats.questionIds.size : stats.attempts,
+    achieved: Math.round(stats.achieved * 100) / 100,
+    max: Math.round(stats.max * 100) / 100,
+    rate: roundRate(stats.max > 0 ? stats.achieved / stats.max : 0),
+    wrongCount: stats.wrongCount || 0,
+    zeroCount: stats.zeroCount || 0,
+    classification,
+  };
+}
+
+function buildTagStats(rows, getTags) {
+  const statsMap = new Map();
+
+  rows.forEach((row) => {
+    const score = Number(row.score);
+    const maxScore = Number(row.max_score);
+
+    if (!Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0) {
+      return;
+    }
+
+    const tags = getTags(row).filter(Boolean);
+    const isWrong = score < maxScore - 0.001;
+
+    tags.forEach((tag) => {
+      const stats = statsMap.get(tag) || {
+        name: tag,
+        attempts: 0,
+        achieved: 0,
+        max: 0,
+        wrongCount: 0,
+        zeroCount: 0,
+        questionIds: new Set(),
+      };
+
+      stats.attempts += 1;
+      stats.achieved += score;
+      stats.max += maxScore;
+      stats.wrongCount += isWrong ? 1 : 0;
+      stats.zeroCount += score <= 0.001 ? 1 : 0;
+      stats.questionIds.add(row.question_id);
+      statsMap.set(tag, stats);
+    });
+  });
+
+  return Array.from(statsMap.values())
+    .map((stats) => {
+      const rate = stats.max > 0 ? stats.achieved / stats.max : 0;
+      const classification = classifyMastery(rate).code;
+
+      return toBucketItem(stats, classification);
+    })
+    .sort((left, right) => left.rate - right.rate || right.attempts - left.attempts);
+}
+
+async function getLatestExamBatch(examId) {
+  const result = await getPool().query(
+    `
+      SELECT
+        b.id,
+        b.exam_id,
+        e.name AS exam_name,
+        b.name,
+        b.status,
+        b.created_at
+      FROM scan_batches b
+      JOIN exams e ON e.id = b.exam_id
+      WHERE b.exam_id = $1
+      ORDER BY b.created_at DESC
+      LIMIT 1
+    `,
+    [examId]
+  );
+
+  return result.rowCount ? mapBatch(result.rows[0]) : null;
+}
+
+async function getOrCreateExamBatch(examId) {
+  const exam = await getExamRecord(examId);
+  const existing = await getLatestExamBatch(examId);
+
+  if (existing) {
+    return existing;
+  }
+
+  const result = await getPool().query(
+    `
+      INSERT INTO scan_batches (id, exam_id, name, status)
+      VALUES ($1, $2, $3, 'draft')
+      RETURNING id, exam_id, name, status, created_at
+    `,
+    [randomUUID(), examId, `${exam.name} 作业批次`]
+  );
+
+  return {
+    ...mapBatch(result.rows[0]),
+    examName: exam.name,
+  };
+}
+
+async function getAssignmentOverview(examId) {
+  const exam = await getExamRecord(examId);
+  const batch = await getLatestExamBatch(examId);
+  const students = exam.classId ? await listStudents(exam.classId) : [];
+  const studentMap = new Map(
+    students.map((student) => [
+      student.id,
+      {
+        ...student,
+        pageCount: 0,
+        resultCount: 0,
+        totalScore: 0,
+        maxScore: exam.totalScore,
+        wrongCount: 0,
+        pendingCount: 0,
+        failedCount: 0,
+        status: "not_submitted",
+      },
+    ])
+  );
+
+  if (batch) {
+    const [pageResult, resultResult, jobResult] = await Promise.all([
+      getPool().query(
+        `
+          SELECT student_id, COUNT(*) AS page_count
+          FROM scanned_pages
+          WHERE batch_id = $1
+          GROUP BY student_id
+        `,
+        [batch.id]
+      ),
+      getPool().query(
+        `
+          SELECT
+            student_id,
+            COUNT(*) AS result_count,
+            COALESCE(SUM(score), 0) AS total_score,
+            COUNT(*) FILTER (WHERE score IS NOT NULL AND score < max_score - 0.001) AS wrong_count
+          FROM grading_results
+          WHERE batch_id = $1
+          GROUP BY student_id
+        `,
+        [batch.id]
+      ),
+      getPool().query(
+        `
+          SELECT
+            ac.student_id,
+            COUNT(*) FILTER (WHERE j.status IN ('pending', 'running')) AS pending_count,
+            COUNT(*) FILTER (WHERE j.status = 'failed') AS failed_count
+          FROM grading_jobs j
+          JOIN answer_crops ac ON ac.id = j.answer_crop_id
+          WHERE j.batch_id = $1
+          GROUP BY ac.student_id
+        `,
+        [batch.id]
+      ),
+    ]);
+
+    pageResult.rows.forEach((row) => {
+      const student = studentMap.get(row.student_id);
+      if (student) {
+        student.pageCount = Number(row.page_count || 0);
+      }
+    });
+
+    resultResult.rows.forEach((row) => {
+      const student = studentMap.get(row.student_id);
+      if (student) {
+        student.resultCount = Number(row.result_count || 0);
+        student.totalScore = Number(row.total_score || 0);
+        student.wrongCount = Number(row.wrong_count || 0);
+      }
+    });
+
+    jobResult.rows.forEach((row) => {
+      const student = studentMap.get(row.student_id);
+      if (student) {
+        student.pendingCount = Number(row.pending_count || 0);
+        student.failedCount = Number(row.failed_count || 0);
+      }
+    });
+  }
+
+  const studentList = Array.from(studentMap.values()).map((student) => {
+    let status = "not_submitted";
+
+    if (student.pageCount > 0) {
+      if (exam.questionCount > 0 && student.resultCount >= exam.questionCount) {
+        status = "graded";
+      } else if (student.failedCount > 0 && student.pendingCount === 0) {
+        status = "needs_review";
+      } else if (student.resultCount > 0 || student.pendingCount > 0) {
+        status = "grading";
+      } else {
+        status = "submitted";
+      }
+    }
+
+    return {
+      ...student,
+      totalScore: Math.round(student.totalScore * 100) / 100,
+      status,
+    };
+  });
+  const submittedCount = studentList.filter((student) => student.pageCount > 0).length;
+  const gradedCount = studentList.filter((student) => student.status === "graded").length;
+  const totalAchieved = studentList.reduce((sum, student) => sum + student.totalScore, 0);
+
+  return {
+    exam,
+    batch,
+    summary: {
+      studentCount: studentList.length,
+      submittedCount,
+      gradedCount,
+      totalAchieved: Math.round(totalAchieved * 100) / 100,
+      questionCount: exam.questionCount,
+      maxScore: exam.totalScore,
+    },
+    students: studentList,
+  };
+}
+
+async function replaceStudentSubmission(batchId, studentId, payload) {
+  const batchResult = await getPool().query(
+    `
+      SELECT b.id, b.exam_id
+      FROM scan_batches b
+      WHERE b.id = $1
+    `,
+    [batchId]
+  );
+
+  if (batchResult.rowCount === 0) {
+    throw new Error("作业批次不存在。");
+  }
+
+  const exam = await getExamRecord(batchResult.rows[0].exam_id);
+  const studentResult = await getPool().query(
+    "SELECT id, class_id, name FROM students WHERE id = $1",
+    [studentId]
+  );
+
+  if (studentResult.rowCount === 0) {
+    throw new Error("学生不存在。");
+  }
+
+  const student = studentResult.rows[0];
+
+  if (exam.classId && student.class_id && exam.classId !== student.class_id) {
+    throw new Error("该学生不属于当前作业所在班级。");
+  }
+
+  if (!payload.image) {
+    throw new Error("请拍照或上传学生作业图片。");
+  }
+
+  await getPool().query(
+    "DELETE FROM scanned_pages WHERE batch_id = $1 AND student_id = $2",
+    [batchId, studentId]
+  );
+
+  return createScannedPage({
+    batchId,
+    studentId,
+    name: payload.name || `${student.name}-作业`,
+    image: payload.image,
+    pageNo: 1,
+  });
+}
+
+async function cropPageIntoJobs(client, batchId, page, regions) {
+  const pageBuffer = Buffer.from(page.image_data);
+  const metadata = await sharp(pageBuffer).metadata();
+  const sourceWidth = Number(metadata.width || 0);
+  const sourceHeight = Number(metadata.height || 0);
+
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error(`扫描答卷 ${page.original_name} 图片尺寸无效。`);
+  }
+
+  let createdCropCount = 0;
+
+  for (const region of regions) {
+    const left = Math.max(0, Math.round(Number(region.x_ratio) * sourceWidth));
+    const top = Math.max(0, Math.round(Number(region.y_ratio) * sourceHeight));
+    const desiredWidth = Math.max(1, Math.round(Number(region.width_ratio) * sourceWidth));
+    const desiredHeight = Math.max(1, Math.round(Number(region.height_ratio) * sourceHeight));
+    const width = Math.min(desiredWidth, sourceWidth - left);
+    const height = Math.min(desiredHeight, sourceHeight - top);
+
+    if (width <= 0 || height <= 0) {
+      continue;
+    }
+
+    const cropBuffer = await sharp(pageBuffer)
+      .extract({ left, top, width, height })
+      .png()
+      .toBuffer();
+    const uploadId = randomUUID();
+    const cropId = randomUUID();
+    const jobId = randomUUID();
+
+    await client.query(
+      `
+        INSERT INTO uploaded_images (id, kind, original_name, mime_type, image_data)
+        VALUES ($1, 'answer_crop', $2, 'image/png', $3)
+      `,
+      [uploadId, `${page.original_name}-${region.question_no}`, cropBuffer]
+    );
+
+    await client.query(
+      `
+        INSERT INTO answer_crops (
+          id,
+          batch_id,
+          scanned_page_id,
+          student_id,
+          question_id,
+          crop_image_id,
+          crop_box
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      `,
+      [
+        cropId,
+        batchId,
+        page.id,
+        page.student_id,
+        region.question_id,
+        uploadId,
+        JSON.stringify({ left, top, width, height }),
+      ]
+    );
+
+    await client.query(
+      `
+        INSERT INTO grading_jobs (id, batch_id, answer_crop_id, status)
+        VALUES ($1, $2, $3, 'pending')
+      `,
+      [jobId, batchId, cropId]
+    );
+
+    createdCropCount += 1;
+  }
+
+  return createdCropCount;
+}
+
+async function processStudentSubmission(batchId, studentId) {
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN");
+    const batchResult = await client.query(
+      "SELECT id, exam_id FROM scan_batches WHERE id = $1",
+      [batchId]
+    );
+
+    if (batchResult.rowCount === 0) {
+      throw new Error("作业批次不存在。");
+    }
+
+    const batch = batchResult.rows[0];
+    const templateResult = await client.query(
+      `
+        SELECT t.id
+        FROM paper_templates t
+        WHERE t.exam_id = $1
+        ORDER BY t.created_at DESC
+        LIMIT 1
+      `,
+      [batch.exam_id]
+    );
+
+    if (templateResult.rowCount === 0) {
+      throw new Error("当前作业还没有试卷模板，请先在作业设置中上传模板。");
+    }
+
+    const regionsResult = await client.query(
+      `
+        SELECT r.*, q.question_no
+        FROM template_regions r
+        JOIN exam_questions q ON q.id = r.question_id
+        WHERE r.template_id = $1
+        ORDER BY q.created_at ASC
+      `,
+      [templateResult.rows[0].id]
+    );
+
+    if (regionsResult.rowCount === 0) {
+      throw new Error("当前模板还没有框选题目区域，请先在作业设置中完成框选。");
+    }
+
+    const pagesResult = await client.query(
+      `
+        SELECT
+          p.id,
+          p.student_id,
+          p.original_name,
+          ui.image_data
+        FROM scanned_pages p
+        JOIN uploaded_images ui ON ui.id = p.image_id
+        WHERE p.batch_id = $1 AND p.student_id = $2
+        ORDER BY p.created_at ASC
+      `,
+      [batchId, studentId]
+    );
+
+    if (pagesResult.rowCount === 0) {
+      throw new Error("该学生还没有上传作业图片。");
+    }
+
+    await client.query(
+      "DELETE FROM answer_crops WHERE batch_id = $1 AND student_id = $2",
+      [batchId, studentId]
+    );
+
+    let cropCount = 0;
+
+    for (const page of pagesResult.rows) {
+      cropCount += await cropPageIntoJobs(client, batchId, page, regionsResult.rows);
+    }
+
+    await client.query("UPDATE scan_batches SET status = 'grading' WHERE id = $1", [batchId]);
+    await client.query("COMMIT");
+
+    return { batchId, studentId, cropCount, jobCount: cropCount };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getStudentGradingProgress(batchId, studentId) {
+  const result = await getPool().query(
+    `
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE j.status = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE j.status = 'running') AS running,
+        COUNT(*) FILTER (WHERE j.status = 'done') AS done,
+        COUNT(*) FILTER (WHERE j.status = 'failed') AS failed
+      FROM grading_jobs j
+      JOIN answer_crops ac ON ac.id = j.answer_crop_id
+      WHERE j.batch_id = $1 AND ac.student_id = $2
+    `,
+    [batchId, studentId]
+  );
+  const row = result.rows[0] || {};
+
+  return {
+    total: Number(row.total || 0),
+    pending: Number(row.pending || 0),
+    running: Number(row.running || 0),
+    done: Number(row.done || 0),
+    failed: Number(row.failed || 0),
+  };
+}
+
+async function getStudentSubmission(batchId, studentId, includeImages = false) {
+  const studentResult = await getPool().query(
+    `
+      SELECT s.id, s.class_id, c.name AS class_name, s.name, s.student_no
+      FROM students s
+      LEFT JOIN classes c ON c.id = s.class_id
+      WHERE s.id = $1
+    `,
+    [studentId]
+  );
+
+  if (studentResult.rowCount === 0) {
+    throw new Error("学生不存在。");
+  }
+
+  const batchResult = await getPool().query(
+    `
+      SELECT b.id, b.exam_id, b.name, b.status, e.name AS exam_name, e.total_score
+      FROM scan_batches b
+      JOIN exams e ON e.id = b.exam_id
+      WHERE b.id = $1
+    `,
+    [batchId]
+  );
+
+  if (batchResult.rowCount === 0) {
+    throw new Error("作业批次不存在。");
+  }
+
+  const [resultsResult, questionsResult, progress] = await Promise.all([
+    getPool().query(
+      `
+        SELECT
+          gr.id,
+          gr.question_id,
+          q.question_no,
+          q.title AS question_title,
+          q.question_type,
+          q.knowledge_points,
+          gr.score,
+          gr.max_score,
+          gr.level,
+          gr.analysis,
+          gr.deductions,
+          gr.suggestions,
+          gr.created_at,
+          ai.mime_type AS answer_mime_type,
+          ai.image_data AS answer_image_data
+        FROM grading_results gr
+        JOIN exam_questions q ON q.id = gr.question_id
+        JOIN grading_jobs j ON j.id = gr.job_id
+        JOIN answer_crops ac ON ac.id = j.answer_crop_id
+        JOIN uploaded_images ai ON ai.id = ac.crop_image_id
+        WHERE gr.batch_id = $1 AND gr.student_id = $2
+        ORDER BY q.created_at ASC
+      `,
+      [batchId, studentId]
+    ),
+    getPool().query(
+      `
+        SELECT id, question_no, title, question_type, knowledge_points, max_score
+        FROM exam_questions
+        WHERE exam_id = $1
+        ORDER BY created_at ASC
+      `,
+      [batchResult.rows[0].exam_id]
+    ),
+    getStudentGradingProgress(batchId, studentId),
+  ]);
+
+  const results = [];
+
+  for (const row of resultsResult.rows) {
+    let answerImage = "";
+
+    if (includeImages && row.answer_image_data) {
+      try {
+        const buffer = await sharp(Buffer.from(row.answer_image_data))
+          .resize({ width: 560, withoutEnlargement: true })
+          .jpeg({ quality: 72 })
+          .toBuffer();
+        answerImage = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+      } catch {
+        answerImage = "";
+      }
+    }
+
+    results.push({
+      id: row.id,
+      questionId: row.question_id,
+      questionNo: row.question_no,
+      questionTitle: row.question_title,
+      questionType: row.question_type || "",
+      knowledgePoints: asJsonArray(row.knowledge_points),
+      score: row.score === null ? null : Number(row.score),
+      maxScore: Number(row.max_score || 0),
+      level: row.level,
+      analysis: row.analysis,
+      deductions: asJsonArray(row.deductions),
+      suggestions: asJsonArray(row.suggestions),
+      answerImage,
+      createdAt: row.created_at,
+    });
+  }
+
+  const answeredQuestionIds = new Set(results.map((item) => item.questionId));
+  const missingQuestions = questionsResult.rows
+    .filter((question) => !answeredQuestionIds.has(question.id))
+    .map((question) => ({
+      questionId: question.id,
+      questionNo: question.question_no,
+      questionTitle: question.title,
+      questionType: question.question_type || "",
+      knowledgePoints: asJsonArray(question.knowledge_points),
+      maxScore: Number(question.max_score || 0),
+    }));
+  const totalScore = results.reduce((sum, item) => sum + (Number(item.score) || 0), 0);
+
+  return {
+    student: {
+      id: studentResult.rows[0].id,
+      classId: studentResult.rows[0].class_id,
+      className: studentResult.rows[0].class_name || "",
+      name: studentResult.rows[0].name,
+      studentNo: studentResult.rows[0].student_no,
+    },
+    batch: {
+      id: batchResult.rows[0].id,
+      examId: batchResult.rows[0].exam_id,
+      examName: batchResult.rows[0].exam_name,
+      name: batchResult.rows[0].name,
+      status: batchResult.rows[0].status,
+    },
+    progress,
+    totalScore: Math.round(totalScore * 100) / 100,
+    maxScore: Number(batchResult.rows[0].total_score || 0),
+    results,
+    missingQuestions,
+  };
+}
+
+async function getBatchAnalysis(batchId) {
+  const batchResult = await getPool().query(
+    `
+      SELECT
+        b.id,
+        b.exam_id,
+        b.name,
+        b.status,
+        b.created_at,
+        e.name AS exam_name,
+        e.subject,
+        e.exam_date,
+        e.total_score,
+        e.class_id,
+        c.name AS class_name
+      FROM scan_batches b
+      JOIN exams e ON e.id = b.exam_id
+      LEFT JOIN classes c ON c.id = e.class_id
+      WHERE b.id = $1
+    `,
+    [batchId]
+  );
+
+  if (batchResult.rowCount === 0) {
+    throw new Error("作业批次不存在。");
+  }
+
+  const batch = batchResult.rows[0];
+  const [questionsResult, studentsResult, resultsResult, analysisResult] = await Promise.all([
+    getPool().query(
+      `
+        SELECT id, question_no, title, question_type, knowledge_points, max_score
+        FROM exam_questions
+        WHERE exam_id = $1
+        ORDER BY created_at ASC
+      `,
+      [batch.exam_id]
+    ),
+    getPool().query(
+      `
+        SELECT DISTINCT s.id, s.name, s.student_no
+        FROM scanned_pages p
+        JOIN students s ON s.id = p.student_id
+        WHERE p.batch_id = $1
+        ORDER BY s.student_no ASC, s.name ASC
+      `,
+      [batchId]
+    ),
+    getPool().query(
+      `
+        SELECT
+          gr.id,
+          gr.student_id,
+          s.name AS student_name,
+          s.student_no,
+          gr.question_id,
+          q.question_no,
+          q.title AS question_title,
+          q.question_type,
+          q.knowledge_points,
+          q.max_score AS question_max_score,
+          gr.score,
+          gr.max_score,
+          gr.level,
+          gr.analysis,
+          gr.deductions,
+          gr.suggestions,
+          gr.created_at
+        FROM grading_results gr
+        JOIN students s ON s.id = gr.student_id
+        JOIN exam_questions q ON q.id = gr.question_id
+        WHERE gr.batch_id = $1
+        ORDER BY q.created_at ASC, s.student_no ASC, gr.created_at ASC
+      `,
+      [batchId]
+    ),
+    getPool().query(
+      "SELECT summary, model, created_at FROM assignment_analyses WHERE batch_id = $1",
+      [batchId]
+    ),
+  ]);
+
+  const latestResultMap = new Map();
+
+  resultsResult.rows.forEach((row) => {
+    latestResultMap.set(`${row.student_id}|${row.question_id}`, row);
+  });
+
+  const results = Array.from(latestResultMap.values()).filter((row) => row.score !== null);
+  const questions = questionsResult.rows.map((question) => {
+    const questionResults = results.filter((row) => row.question_id === question.id);
+    const maxScore = Number(question.max_score || 0);
+    const wrongResults = questionResults.filter((row) => Number(row.score) < maxScore - 0.001);
+    const achieved = questionResults.reduce((sum, row) => sum + Number(row.score || 0), 0);
+    const maxTotal = questionResults.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
+
+    return {
+      id: question.id,
+      questionNo: question.question_no,
+      questionTitle: question.title,
+      questionType: question.question_type || "",
+      knowledgePoints: asJsonArray(question.knowledge_points),
+      maxScore,
+      gradedCount: questionResults.length,
+      correctCount: questionResults.filter((row) => Number(row.score) >= maxScore - 0.001).length,
+      wrongCount: wrongResults.length,
+      zeroCount: questionResults.filter((row) => Number(row.score) <= 0.001).length,
+      avgScore: questionResults.length ? Math.round((achieved / questionResults.length) * 100) / 100 : 0,
+      rate: roundRate(maxTotal > 0 ? achieved / maxTotal : 0),
+      wrongStudents: wrongResults.map((row) => ({
+        studentId: row.student_id,
+        studentName: row.student_name,
+        studentNo: row.student_no,
+        score: Number(row.score),
+        maxScore: Number(row.max_score || 0),
+        analysis: row.analysis || "",
+        deductions: asJsonArray(row.deductions),
+      })),
+    };
+  });
+
+  const knowledgeStatsMap = new Map();
+
+  results.forEach((row) => {
+    const score = Number(row.score);
+    const maxScore = Number(row.max_score);
+    const isWrong = score < maxScore - 0.001;
+
+    asJsonArray(row.knowledge_points).forEach((knowledgePoint) => {
+      const stats = knowledgeStatsMap.get(knowledgePoint) || {
+        name: knowledgePoint,
+        attempts: 0,
+        achieved: 0,
+        max: 0,
+        wrongCount: 0,
+        zeroCount: 0,
+        questionIds: new Set(),
+        wrongStudentMap: new Map(),
+      };
+
+      stats.attempts += 1;
+      stats.achieved += score;
+      stats.max += maxScore;
+      stats.wrongCount += isWrong ? 1 : 0;
+      stats.zeroCount += score <= 0.001 ? 1 : 0;
+      stats.questionIds.add(row.question_id);
+
+      if (isWrong) {
+        stats.wrongStudentMap.set(row.student_id, row.student_name);
+      }
+
+      knowledgeStatsMap.set(knowledgePoint, stats);
+    });
+  });
+
+  const knowledgePoints = Array.from(knowledgeStatsMap.values())
+    .map((stats) => {
+      const rate = stats.max > 0 ? stats.achieved / stats.max : 0;
+      const classification = classifyMastery(rate);
+
+      return {
+        name: stats.name,
+        attempts: stats.attempts,
+        questionCount: stats.questionIds.size,
+        achieved: Math.round(stats.achieved * 100) / 100,
+        max: Math.round(stats.max * 100) / 100,
+        rate: roundRate(rate),
+        wrongCount: stats.wrongCount,
+        zeroCount: stats.zeroCount,
+        classification: classification.code,
+        label: classification.label,
+        wrongStudents: Array.from(stats.wrongStudentMap.values()),
+      };
+    })
+    .sort((left, right) => left.rate - right.rate || right.wrongCount - left.wrongCount);
+
+  const studentStatsMap = new Map();
+
+  studentsResult.rows.forEach((student) => {
+    studentStatsMap.set(student.id, {
+      studentId: student.id,
+      studentName: student.name,
+      studentNo: student.student_no,
+      achieved: 0,
+      max: 0,
+      resultCount: 0,
+      wrongQuestions: [],
+    });
+  });
+
+  results.forEach((row) => {
+    const student = studentStatsMap.get(row.student_id);
+
+    if (!student) {
+      return;
+    }
+
+    const score = Number(row.score);
+    const maxScore = Number(row.max_score);
+    student.achieved += score;
+    student.max += maxScore;
+    student.resultCount += 1;
+
+    if (score < maxScore - 0.001) {
+      student.wrongQuestions.push({
+        questionNo: row.question_no,
+        score,
+        maxScore,
+        knowledgePoints: asJsonArray(row.knowledge_points),
+      });
+    }
+  });
+
+  const studentStats = Array.from(studentStatsMap.values()).map((student) => ({
+    ...student,
+    achieved: Math.round(student.achieved * 100) / 100,
+    max: Math.round(student.max * 100) / 100,
+    rate: roundRate(student.max > 0 ? student.achieved / student.max : 0),
+  }));
+  const gradedStudentCount = questions.length
+    ? studentStats.filter((student) => student.resultCount >= questions.length).length
+    : 0;
+  const totalAchieved = results.reduce((sum, row) => sum + Number(row.score || 0), 0);
+  const totalMax = results.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
+  const gradedStudents = studentStats.filter((student) => student.resultCount > 0);
+  const passCount = gradedStudents.filter((student) => student.rate >= 0.6).length;
+  const distribution = [
+    { label: "优秀（90%以上）", count: gradedStudents.filter((student) => student.rate >= 0.9).length },
+    { label: "良好（80%-90%）", count: gradedStudents.filter((student) => student.rate >= 0.8 && student.rate < 0.9).length },
+    { label: "及格（60%-80%）", count: gradedStudents.filter((student) => student.rate >= 0.6 && student.rate < 0.8).length },
+    { label: "待提升（60%以下）", count: gradedStudents.filter((student) => student.rate < 0.6).length },
+  ];
+  const savedAnalysis = analysisResult.rowCount
+    ? {
+        summary: analysisResult.rows[0].summary,
+        model: analysisResult.rows[0].model,
+        createdAt: analysisResult.rows[0].created_at,
+      }
+    : null;
+
+  return {
+    batch: {
+      id: batch.id,
+      name: batch.name,
+      status: batch.status,
+      createdAt: batch.created_at,
+    },
+    exam: {
+      id: batch.exam_id,
+      name: batch.exam_name,
+      subject: batch.subject,
+      examDate: batch.exam_date,
+      totalScore: Number(batch.total_score || 0),
+      classId: batch.class_id,
+      className: batch.class_name || "",
+    },
+    overview: {
+      studentCount: studentsResult.rowCount,
+      gradedStudentCount,
+      gradedResultCount: results.length,
+      achieved: Math.round(totalAchieved * 100) / 100,
+      max: Math.round(totalMax * 100) / 100,
+      rate: roundRate(totalMax > 0 ? totalAchieved / totalMax : 0),
+      wrongResultCount: results.filter((row) => Number(row.score) < Number(row.max_score) - 0.001).length,
+      passCount,
+      passRate: gradedStudents.length ? roundRate(passCount / gradedStudents.length) : 0,
+    },
+    questions,
+    knowledgePoints,
+    students: studentStats,
+    distribution,
+    savedAnalysis,
+  };
+}
+
+async function getBatchAnalysisAiPayload(batchId) {
+  const analysis = await getBatchAnalysis(batchId);
+  const wrongQuestionIds = new Set(
+    analysis.questions.filter((question) => question.wrongCount > 0).map((question) => question.id)
+  );
+
+  if (!wrongQuestionIds.size) {
+    return { analysis, questions: [] };
+  }
+
+  const imageResult = await getPool().query(
+    `
+      SELECT
+        gr.student_id,
+        gr.question_id,
+        ai.mime_type,
+        ai.image_data
+      FROM grading_results gr
+      JOIN grading_jobs j ON j.id = gr.job_id
+      JOIN answer_crops ac ON ac.id = j.answer_crop_id
+      JOIN uploaded_images ai ON ai.id = ac.crop_image_id
+      WHERE gr.batch_id = $1 AND gr.score IS NOT NULL AND gr.score < gr.max_score - 0.001
+      ORDER BY gr.created_at ASC
+    `,
+    [batchId]
+  );
+  const imageMap = new Map();
+
+  for (const row of imageResult.rows) {
+    const key = `${row.student_id}|${row.question_id}`;
+    const entry = imageMap.get(key) || [];
+    entry.push(row);
+    imageMap.set(key, entry);
+  }
+
+  let imageBudget = 10;
+  const questions = [];
+
+  for (const question of analysis.questions) {
+    if (!question.wrongCount) {
+      continue;
+    }
+
+    const wrongAnswers = [];
+
+    for (const wrong of question.wrongStudents) {
+      const images = imageMap.get(`${wrong.studentId}|${question.id}`) || [];
+      let image = "";
+
+      if (images.length && imageBudget > 0) {
+        const source = images[0];
+
+        try {
+          const buffer = await sharp(Buffer.from(source.image_data))
+            .resize({ width: 760, withoutEnlargement: true })
+            .jpeg({ quality: 70 })
+            .toBuffer();
+          image = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+          imageBudget -= 1;
+        } catch {
+          image = "";
+        }
+      }
+
+      wrongAnswers.push({
+        studentName: wrong.studentName,
+        score: wrong.score,
+        maxScore: wrong.maxScore,
+        analysis: wrong.analysis,
+        deductions: wrong.deductions,
+        image,
+      });
+    }
+
+    questions.push({
+      questionNo: question.questionNo,
+      questionTitle: question.questionTitle,
+      questionType: question.questionType,
+      knowledgePoints: question.knowledgePoints,
+      maxScore: question.maxScore,
+      wrongCount: question.wrongCount,
+      wrongAnswers,
+    });
+  }
+
+  return { analysis, questions };
+}
+
+async function saveBatchAnalysis(batchId, summary, model) {
+  const result = await getPool().query(
+    `
+      INSERT INTO assignment_analyses (id, batch_id, summary, model)
+      VALUES ($1, $2, $3::jsonb, $4)
+      ON CONFLICT (batch_id)
+      DO UPDATE SET summary = EXCLUDED.summary, model = EXCLUDED.model, created_at = now()
+      RETURNING id, batch_id, summary, model, created_at
+    `,
+    [randomUUID(), batchId, JSON.stringify(summary || {}), model || ""]
+  );
+
+  return result.rows[0];
+}
+
+async function getStudentHistoryAnalysis(studentId) {
+  const studentResult = await getPool().query(
+    `
+      SELECT s.id, s.class_id, c.name AS class_name, s.name, s.student_no
+      FROM students s
+      LEFT JOIN classes c ON c.id = s.class_id
+      WHERE s.id = $1
+    `,
+    [studentId]
+  );
+
+  if (studentResult.rowCount === 0) {
+    throw new Error("学生不存在。");
+  }
+
+  const result = await getPool().query(
+    `
+      WITH latest AS (
+        SELECT DISTINCT ON (gr.exam_id, gr.question_id) gr.*
+        FROM grading_results gr
+        WHERE gr.student_id = $1 AND gr.score IS NOT NULL
+        ORDER BY gr.exam_id, gr.question_id, gr.created_at DESC
+      )
+      SELECT
+        latest.student_id,
+        latest.score,
+        latest.max_score,
+        latest.question_id,
+        q.question_no,
+        q.title AS question_title,
+        q.knowledge_points,
+        q.question_type,
+        e.id AS exam_id,
+        e.name AS exam_name,
+        e.subject,
+        e.exam_date,
+        latest.created_at
+      FROM latest
+      JOIN exam_questions q ON q.id = latest.question_id
+      JOIN exams e ON e.id = latest.exam_id
+      ORDER BY e.exam_date NULLS LAST, latest.created_at ASC
+    `,
+    [studentId]
+  );
+
+  const rows = result.rows;
+  const knowledgePoints = buildTagStats(rows, (row) => asJsonArray(row.knowledge_points));
+  const questionTypes = buildTagStats(rows, (row) => [row.question_type || "未标注题型"]);
+  const buckets = { mastered: [], developing: [], weak: [] };
+  const typeBuckets = { mastered: [], developing: [], weak: [] };
+
+  knowledgePoints.forEach((item) => buckets[item.classification].push(item));
+  questionTypes.forEach((item) => typeBuckets[item.classification].push(item));
+
+  const examMap = new Map();
+
+  rows.forEach((row) => {
+    const exam = examMap.get(row.exam_id) || {
+      examId: row.exam_id,
+      name: row.exam_name,
+      subject: row.subject || "",
+      examDate: row.exam_date,
+      achieved: 0,
+      max: 0,
+      questionCount: 0,
+    };
+
+    exam.achieved += Number(row.score || 0);
+    exam.max += Number(row.max_score || 0);
+    exam.questionCount += 1;
+    examMap.set(row.exam_id, exam);
+  });
+
+  const recentExams = Array.from(examMap.values())
+    .map((exam) => ({
+      ...exam,
+      achieved: Math.round(exam.achieved * 100) / 100,
+      max: Math.round(exam.max * 100) / 100,
+      rate: roundRate(exam.max > 0 ? exam.achieved / exam.max : 0),
+    }))
+    .sort((left, right) => {
+      const leftTime = left.examDate ? new Date(left.examDate).getTime() : 0;
+      const rightTime = right.examDate ? new Date(right.examDate).getTime() : 0;
+      return rightTime - leftTime;
+    });
+  const weakQuestions = rows
+    .map((row) => ({
+      questionNo: row.question_no,
+      questionTitle: row.question_title,
+      questionType: row.question_type || "",
+      knowledgePoints: asJsonArray(row.knowledge_points),
+      examId: row.exam_id,
+      examName: row.exam_name,
+      score: Number(row.score),
+      maxScore: Number(row.max_score),
+      rate: roundRate(Number(row.max_score) > 0 ? Number(row.score) / Number(row.max_score) : 0),
+    }))
+    .filter((question) => question.rate < MASTERY_DEVELOPING)
+    .sort((left, right) => left.rate - right.rate);
+  const totalAchieved = rows.reduce((sum, row) => sum + Number(row.score || 0), 0);
+  const totalMax = rows.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
+
+  return {
+    student: {
+      id: studentResult.rows[0].id,
+      classId: studentResult.rows[0].class_id,
+      className: studentResult.rows[0].class_name || "",
+      name: studentResult.rows[0].name,
+      studentNo: studentResult.rows[0].student_no,
+    },
+    overview: {
+      examCount: examMap.size,
+      questionCount: rows.length,
+      achieved: Math.round(totalAchieved * 100) / 100,
+      max: Math.round(totalMax * 100) / 100,
+      rate: roundRate(totalMax > 0 ? totalAchieved / totalMax : 0),
+      thresholds: { mastered: MASTERY_MASTERED, developing: MASTERY_DEVELOPING },
+    },
+    knowledgePoints,
+    questionTypes,
+    buckets,
+    typeBuckets,
+    recentExams,
+    weakQuestions,
+  };
+}
+
+async function getClassHistoryAnalysis(classId) {
+  const classItem = await getClassRecord(classId);
+  const result = await getPool().query(
+    `
+      WITH latest AS (
+        SELECT DISTINCT ON (gr.student_id, gr.exam_id, gr.question_id) gr.*
+        FROM grading_results gr
+        JOIN exams e ON e.id = gr.exam_id
+        LEFT JOIN students s ON s.id = gr.student_id
+        WHERE COALESCE(e.class_id, s.class_id) = $1 AND gr.score IS NOT NULL
+        ORDER BY gr.student_id, gr.exam_id, gr.question_id, gr.created_at DESC
+      )
+      SELECT
+        latest.student_id,
+        s.name AS student_name,
+        s.student_no,
+        latest.score,
+        latest.max_score,
+        latest.question_id,
+        q.question_no,
+        q.title AS question_title,
+        q.knowledge_points,
+        q.question_type,
+        e.id AS exam_id,
+        e.name AS exam_name,
+        e.exam_date
+      FROM latest
+      JOIN students s ON s.id = latest.student_id
+      JOIN exam_questions q ON q.id = latest.question_id
+      JOIN exams e ON e.id = latest.exam_id
+      ORDER BY s.student_no ASC, s.name ASC, e.created_at ASC
+    `,
+    [classId]
+  );
+
+  const rows = result.rows;
+  const buildClassTagStats = (getTags) => {
+    const tagMap = new Map();
+
+    rows.forEach((row) => {
+      const score = Number(row.score);
+      const maxScore = Number(row.max_score);
+
+      if (!Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0) {
+        return;
+      }
+
+      getTags(row).filter(Boolean).forEach((tag) => {
+        const stats = tagMap.get(tag) || {
+          name: tag,
+          achieved: 0,
+          max: 0,
+          attempts: 0,
+          questionIds: new Set(),
+          studentMap: new Map(),
+        };
+
+        stats.achieved += score;
+        stats.max += maxScore;
+        stats.attempts += 1;
+        stats.questionIds.add(row.question_id);
+        const student = stats.studentMap.get(row.student_id) || {
+          studentId: row.student_id,
+          name: row.student_name,
+          studentNo: row.student_no,
+          achieved: 0,
+          max: 0,
+        };
+        student.achieved += score;
+        student.max += maxScore;
+        stats.studentMap.set(row.student_id, student);
+        tagMap.set(tag, stats);
+      });
+    });
+
+    return Array.from(tagMap.values())
+      .map((stats) => {
+        const students = Array.from(stats.studentMap.values()).map((student) => ({
+          ...student,
+          achieved: Math.round(student.achieved * 100) / 100,
+          max: Math.round(student.max * 100) / 100,
+          rate: roundRate(student.max > 0 ? student.achieved / student.max : 0),
+        }));
+        const masteredStudents = students.filter((student) => student.rate >= MASTERY_MASTERED);
+        const developingStudents = students.filter(
+          (student) => student.rate >= MASTERY_DEVELOPING && student.rate < MASTERY_MASTERED
+        );
+        const weakStudents = students.filter((student) => student.rate < MASTERY_DEVELOPING);
+        const studentCount = students.length;
+        const rate = stats.max > 0 ? stats.achieved / stats.max : 0;
+        let label = "部分学生掌握";
+
+        if (studentCount > 0 && masteredStudents.length / studentCount >= 0.8) {
+          label = "大部分学生已掌握";
+        } else if (studentCount > 0 && weakStudents.length / studentCount >= 0.5) {
+          label = "大部分学生还未掌握";
+        }
+
+        return {
+          name: stats.name,
+          attempts: stats.attempts,
+          questionCount: stats.questionIds.size,
+          achieved: Math.round(stats.achieved * 100) / 100,
+          max: Math.round(stats.max * 100) / 100,
+          rate: roundRate(rate),
+          studentCount,
+          masteredCount: masteredStudents.length,
+          developingCount: developingStudents.length,
+          weakCount: weakStudents.length,
+          masteredStudents: masteredStudents.map((student) => student.name),
+          developingStudents: developingStudents.map((student) => student.name),
+          weakStudents: weakStudents.map((student) => student.name),
+          label,
+        };
+      })
+      .sort((left, right) => left.rate - right.rate || right.studentCount - left.studentCount);
+  };
+
+  const knowledgePoints = buildClassTagStats((row) => asJsonArray(row.knowledge_points));
+  const questionTypes = buildClassTagStats((row) => [row.question_type || "未标注题型"]);
+  const studentMap = new Map();
+
+  rows.forEach((row) => {
+    const student = studentMap.get(row.student_id) || {
+      studentId: row.student_id,
+      name: row.student_name,
+      studentNo: row.student_no,
+      achieved: 0,
+      max: 0,
+      questionCount: 0,
+    };
+    student.achieved += Number(row.score || 0);
+    student.max += Number(row.max_score || 0);
+    student.questionCount += 1;
+    studentMap.set(row.student_id, student);
+  });
+
+  const students = Array.from(studentMap.values())
+    .map((student) => {
+      return {
+        ...student,
+        achieved: Math.round(student.achieved * 100) / 100,
+        max: Math.round(student.max * 100) / 100,
+        rate: roundRate(student.max > 0 ? student.achieved / student.max : 0),
+        weakKnowledgePoints: knowledgePoints
+          .filter((item) => item.weakStudents.includes(student.name))
+          .map((item) => item.name),
+        masteredKnowledgePoints: knowledgePoints
+          .filter((item) => item.masteredStudents.includes(student.name))
+          .map((item) => item.name),
+      };
+    })
+    .sort((left, right) => left.rate - right.rate);
+  const totalAchieved = rows.reduce((sum, row) => sum + Number(row.score || 0), 0);
+  const totalMax = rows.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
+  const examIds = new Set(rows.map((row) => row.exam_id));
+
+  return {
+    classInfo: classItem,
+    overview: {
+      studentCount: students.length,
+      examCount: examIds.size,
+      resultCount: rows.length,
+      achieved: Math.round(totalAchieved * 100) / 100,
+      max: Math.round(totalMax * 100) / 100,
+      rate: roundRate(totalMax > 0 ? totalAchieved / totalMax : 0),
+      thresholds: { mastered: MASTERY_MASTERED, developing: MASTERY_DEVELOPING },
+    },
+    knowledgePoints,
+    questionTypes,
+    students,
+  };
+}
+
 async function processScanBatch(batchId) {
   const client = await getPool().connect();
 
@@ -1045,77 +2594,7 @@ async function processScanBatch(batchId) {
     let createdCropCount = 0;
 
     for (const page of pagesResult.rows) {
-      const pageBuffer = Buffer.from(page.image_data);
-      const metadata = await sharp(pageBuffer).metadata();
-      const sourceWidth = Number(metadata.width || 0);
-      const sourceHeight = Number(metadata.height || 0);
-
-      if (!sourceWidth || !sourceHeight) {
-        throw new Error(`扫描答卷 ${page.original_name} 图片尺寸无效。`);
-      }
-
-      for (const region of regionsResult.rows) {
-        const left = Math.max(0, Math.round(Number(region.x_ratio) * sourceWidth));
-        const top = Math.max(0, Math.round(Number(region.y_ratio) * sourceHeight));
-        const desiredWidth = Math.max(1, Math.round(Number(region.width_ratio) * sourceWidth));
-        const desiredHeight = Math.max(1, Math.round(Number(region.height_ratio) * sourceHeight));
-        const width = Math.min(desiredWidth, sourceWidth - left);
-        const height = Math.min(desiredHeight, sourceHeight - top);
-
-        if (width <= 0 || height <= 0) {
-          continue;
-        }
-
-        const cropBuffer = await sharp(pageBuffer)
-          .extract({ left, top, width, height })
-          .png()
-          .toBuffer();
-        const uploadId = randomUUID();
-        const cropId = randomUUID();
-        const jobId = randomUUID();
-
-        await client.query(
-          `
-            INSERT INTO uploaded_images (id, kind, original_name, mime_type, image_data)
-            VALUES ($1, 'answer_crop', $2, 'image/png', $3)
-          `,
-          [uploadId, `${page.original_name}-${region.question_no}`, cropBuffer]
-        );
-
-        await client.query(
-          `
-            INSERT INTO answer_crops (
-              id,
-              batch_id,
-              scanned_page_id,
-              student_id,
-              question_id,
-              crop_image_id,
-              crop_box
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-          `,
-          [
-            cropId,
-            batchId,
-            page.id,
-            page.student_id,
-            region.question_id,
-            uploadId,
-            JSON.stringify({ left, top, width, height }),
-          ]
-        );
-
-        await client.query(
-          `
-            INSERT INTO grading_jobs (id, batch_id, answer_crop_id, status)
-            VALUES ($1, $2, $3, 'pending')
-          `,
-          [jobId, batchId, cropId]
-        );
-
-        createdCropCount += 1;
-      }
+      createdCropCount += await cropPageIntoJobs(client, batchId, page, regionsResult.rows);
     }
 
     await client.query("UPDATE scan_batches SET status = 'ready' WHERE id = $1", [batchId]);
@@ -1130,22 +2609,38 @@ async function processScanBatch(batchId) {
   }
 }
 
-async function claimNextGradingJob(batchId) {
+async function claimNextGradingJob(batchId, studentId) {
   const client = await getPool().connect();
 
   try {
     await client.query("BEGIN");
-    const result = await client.query(
-      `
-        SELECT id
-        FROM grading_jobs
-        WHERE batch_id = $1 AND status IN ('pending', 'failed') AND attempts < 3
-        ORDER BY created_at ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      `,
-      [batchId]
-    );
+    const result = studentId
+      ? await client.query(
+          `
+            SELECT j.id
+            FROM grading_jobs j
+            JOIN answer_crops ac ON ac.id = j.answer_crop_id
+            WHERE j.batch_id = $1
+              AND ac.student_id = $2
+              AND j.status IN ('pending', 'failed')
+              AND j.attempts < 3
+            ORDER BY j.created_at ASC
+            LIMIT 1
+            FOR UPDATE OF j SKIP LOCKED
+          `,
+          [batchId, studentId]
+        )
+      : await client.query(
+          `
+            SELECT id
+            FROM grading_jobs
+            WHERE batch_id = $1 AND status IN ('pending', 'failed') AND attempts < 3
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+          `,
+          [batchId]
+        );
 
     if (result.rowCount === 0) {
       await client.query("COMMIT");
@@ -1515,8 +3010,17 @@ module.exports = {
   deleteAiGradingHistory,
   deleteUploads,
   failGradingJob,
+  getAssignmentOverview,
+  getBatchAnalysis,
+  getBatchAnalysisAiPayload,
   getBatchResults,
+  getClassHistoryAnalysis,
   getGradingJobPayload,
+  getOrCreateExamBatch,
+  getStudentGradingProgress,
+  getStudentHistoryAnalysis,
+  getStudentSubmission,
+  importStudents,
   initDatabase,
   listClasses,
   listExamQuestions,
@@ -1530,5 +3034,8 @@ module.exports = {
   listTemplateRegions,
   listUploads,
   processScanBatch,
+  processStudentSubmission,
+  replaceStudentSubmission,
+  saveBatchAnalysis,
   saveTemplateRegion,
 };

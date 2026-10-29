@@ -3,6 +3,7 @@
     classes: [],
     students: [],
     exams: [],
+    defaultClassId: "",
     questions: [],
     templates: [],
     regions: [],
@@ -119,9 +120,33 @@
     }
   }
 
+  function resolveDefaultClassId() {
+    const stored = window.AppAuth?.getDefaultClassId?.() || "";
+
+    if (stored && state.classes.some((item) => item.id === stored)) {
+      return stored;
+    }
+
+    const fallback = state.classes[0]?.id || "";
+    window.AppAuth?.setDefaultClassId?.(fallback);
+    return fallback;
+  }
+
+  function getScopedStudents() {
+    if (!state.defaultClassId) {
+      return state.students;
+    }
+
+    return state.students.filter((student) => student.classId === state.defaultClassId);
+  }
+
   function renderCoreSelects() {
     $$('[data-select="classes"]').forEach((select) => {
       fillSelect(select, state.classes, (item) => item.grade ? `${item.name}（${item.grade}）` : item.name, "请选择班级");
+
+      if (state.defaultClassId && state.classes.some((item) => item.id === state.defaultClassId)) {
+        select.value = state.defaultClassId;
+      }
     });
     $$('[data-select="exams"]').forEach((select) => {
       fillSelect(select, state.exams, (item) => `${item.name}${item.subject ? `｜${item.subject}` : ""}`, "请选择考试");
@@ -130,18 +155,20 @@
 
   function renderMetrics() {
     elements.classMetric.textContent = state.classes.length;
-    elements.studentMetric.textContent = state.students.length;
+    elements.studentMetric.textContent = getScopedStudents().length;
     elements.examMetric.textContent = state.exams.length;
     elements.questionMetric.textContent = state.questions.length;
   }
 
   function renderStudents() {
-    if (!state.students.length) {
-      elements.studentList.innerHTML = '<p class="empty-text">暂无学生</p>';
+    const students = getScopedStudents();
+
+    if (!students.length) {
+      elements.studentList.innerHTML = '<p class="empty-text">当前默认班级暂无学生</p>';
       return;
     }
 
-    elements.studentList.innerHTML = state.students
+    elements.studentList.innerHTML = students
       .map((student) => `
         <div class="mini-item">
           <strong>${escapeHtml(student.name)}</strong>
@@ -219,7 +246,7 @@
       return;
     }
 
-    const studentOptions = state.students
+    const studentOptions = getScopedStudents()
       .map((student) => `<option value="${escapeHtml(student.id)}">${escapeHtml(student.name)}${student.studentNo ? `｜${escapeHtml(student.studentNo)}` : ""}</option>`)
       .join("");
 
@@ -234,7 +261,7 @@
         </div>
       `)
       .join("");
-    elements.uploadPagesButton.disabled = !elements.activeBatchSelect.value || !state.students.length;
+    elements.uploadPagesButton.disabled = !elements.activeBatchSelect.value || !getScopedStudents().length;
   }
 
   function renderBatchSelect() {
@@ -323,6 +350,18 @@
     state.students = payload.students || [];
     state.exams = payload.exams || [];
     state.batches = payload.batches || [];
+    state.defaultClassId = resolveDefaultClassId();
+
+    const classExam = state.exams.find((exam) => exam.classId === state.defaultClassId);
+
+    if (classExam) {
+      $$('[data-select="exams"]').forEach((select) => {
+        if (Array.from(select.options).some((option) => option.value === classExam.id)) {
+          select.value = classExam.id;
+        }
+      });
+    }
+
     renderCoreSelects();
     renderMetrics();
     renderStudents();
@@ -696,6 +735,37 @@
     elements.uploadPagesButton.addEventListener("click", () => uploadPendingPages());
     elements.processBatchButton.addEventListener("click", () => processCurrentBatch());
     elements.startBatchGradeButton.addEventListener("click", () => startBatchGrading());
+
+    window.addEventListener("default-class-changed", (event) => {
+      const classId = event.detail?.classId || "";
+
+      if (classId === state.defaultClassId) {
+        return;
+      }
+
+      state.defaultClassId = classId;
+      renderCoreSelects();
+      renderMetrics();
+      renderStudents();
+      renderPendingScans();
+
+      const classExam = state.exams.find((exam) => exam.classId === classId);
+
+      if (classExam) {
+        loadSelectedExam(classExam.id).catch((error) => alert(error.message));
+        return;
+      }
+
+      state.questions = [];
+      state.templates = [];
+      state.currentTemplate = null;
+      state.regions = [];
+      renderQuestionSelect();
+      renderTemplate();
+      renderRegions();
+      renderMetrics();
+      setStatus("当前默认班级还没有考试");
+    });
   }
 
   setupTemplateSelection();

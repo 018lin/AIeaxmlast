@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
 const db = require("./db");
+const { authenticate } = require("./lib/auth");
 const { gradeImages } = require("./lib/ai-grader");
 const { handleMvpRequest } = require("./lib/mvp-handler");
 
@@ -112,6 +113,20 @@ function validateGradeRequest(payload) {
   }
 
   return "";
+}
+
+async function handleAuth(request, response) {
+  let payload;
+
+  try {
+    payload = await readJsonPayload(request);
+  } catch (error) {
+    sendJson(response, 400, { message: "请求数据格式不正确。" });
+    return;
+  }
+
+  const result = authenticate(payload);
+  sendJson(response, result.statusCode, result.payload);
 }
 
 async function handleAiGrade(request, response) {
@@ -326,6 +341,11 @@ function serveStatic(request, response) {
 }
 
 const server = http.createServer((request, response) => {
+  if (request.method === "POST" && request.url?.startsWith("/api/auth")) {
+    handleAuth(request, response);
+    return;
+  }
+
   if (request.method === "POST" && request.url?.startsWith("/api/ai-grade")) {
     handleAiGrade(request, response);
     return;

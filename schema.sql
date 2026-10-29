@@ -111,8 +111,11 @@ CREATE TABLE IF NOT EXISTS exam_questions (
   max_score numeric NOT NULL,
   rubric text NOT NULL DEFAULT '',
   knowledge_points jsonb NOT NULL DEFAULT '[]'::jsonb,
+  question_type text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS question_type text NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS exam_questions_exam_idx
   ON exam_questions (exam_id, created_at ASC);
@@ -222,3 +225,21 @@ CREATE TABLE IF NOT EXISTS grading_results (
 
 CREATE INDEX IF NOT EXISTS grading_results_batch_student_idx
   ON grading_results (batch_id, student_id, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS grading_results_student_exam_idx
+  ON grading_results (student_id, exam_id, question_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS grading_results_exam_idx
+  ON grading_results (exam_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS assignment_analyses (
+  id uuid PRIMARY KEY,
+  batch_id uuid NOT NULL REFERENCES scan_batches(id) ON DELETE CASCADE,
+  summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+  model text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (batch_id)
+);
+
+CREATE INDEX IF NOT EXISTS assignment_analyses_batch_idx
+  ON assignment_analyses (batch_id, created_at DESC);

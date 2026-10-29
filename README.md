@@ -25,15 +25,30 @@ DEEPSEEK_MODEL=deepseek-v4-flash-vision-exp
 DATABASE_URL=postgresql://username:password@your-neon-host/neondb?sslmode=require
 DATABASE_SSL=true
 PORT=8080
+TEACHER_ACCOUNT=018
+TEACHER_PASSWORD=018018
+TEACHER_NAME=018老师
 ```
 
 线上部署时，在服务器或部署平台的环境变量面板中配置同名变量。Vercel 的 Neon 集成通常会自动注入 `POSTGRES_URL`，代码会优先读取 `DATABASE_URL`，没有时自动读取 `POSTGRES_URL`。
+
+## 教师登录与默认班级
+
+除登录页外，`teacher.html`、`homework.html`、`batch-grading.html`、`class-setup.html` 都会在进入前校验登录状态，未登录会跳回登录页并在登录后返回原页面。
+
+- 账号密码由服务端 `POST /api/auth` 校验（`crypto.timingSafeEqual`），可通过 `TEACHER_ACCOUNT`、`TEACHER_PASSWORD` 覆盖默认测试账号 `018 / 018018`；`TEACHER_NAME` 用于展示教师名称。
+- 登录会话保存在浏览器 localStorage，有效期 7 天，退出登录后清除。
+- 控制台右上角显示当前默认班级，下拉即可切换；“增加班级”进入 `class-setup.html`，支持 Excel 名单批量导入或手动填写姓名学号（可动态新增多行）。
+- 默认班级会同步到作业批改与批量阅卷页面，班级、学生和考试下拉框自动按默认班级筛选。
+- 默认班级右侧为教师头像；未设置时显示白底胡萝卜色“教”字，支持上传图片（自动居中裁切为 256×256 JPEG）和恢复默认头像。
+
 
 ## Vercel 部署
 
 项目已经包含 Vercel Serverless API：
 
 - `/api/ai-grade`：调用 DeepSeek 阅卷。
+- `/api/auth`：校验教师账号密码并返回教师信息。
 - `/api/uploads`：保存和读取上传图片。
 - `/api/pairs`：保存和读取题目答案对应关系。
 
@@ -43,6 +58,9 @@ PORT=8080
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_MODEL=deepseek-v4-flash-vision-exp
 DATABASE_SSL=true
+TEACHER_ACCOUNT=018
+TEACHER_PASSWORD=018018
+TEACHER_NAME=018老师
 ```
 
 Neon Postgres 集成会自动配置 `POSTGRES_URL`。如果没有自动注入，也可以手动添加 `DATABASE_URL`。
@@ -56,6 +74,7 @@ Neon Postgres 集成会自动配置 `POSTGRES_URL`。如果没有自动注入，
 - `classes`、`students`、`exams`、`exam_questions`：保存班级、学生、考试和题目。
 - `paper_templates`、`template_regions`：保存试卷模板图片和每道题的裁切区域。
 - `scan_batches`、`scanned_pages`、`answer_crops`、`grading_jobs`、`grading_results`：保存扫描批次、学生答卷、自动裁切结果、逐题阅卷任务和成绩明细。
+- `assignment_analyses`：保存每次作业的 AI 错因与教学建议分析结果（按批次唯一）。
 
 Neon 连接串通常自带 `sslmode=require`，代码会自动启用 SSL；也可以显式设置 `DATABASE_SSL=true`。
 
@@ -79,6 +98,48 @@ http://localhost:8080/batch-grading.html
 8. 页面会展示学生总分表和每题评分明细。
 
 当前 MVP 默认一张扫描图片是一名学生的一页完整答卷。正式大规模上线前，建议继续补二维码/条形码识别、PDF 拆页、异常复核、对象存储和后台队列。
+
+## 作业批改与学情分析
+
+教师控制台新增“作业批改与学情分析”入口：
+
+```text
+http://localhost:8080/homework.html
+```
+
+页面分为四个标签：
+
+1. **前期设置**：创建班级，导入全班的 Excel 名单（支持 `.xlsx`、`.xls`、`.csv`，自动识别“姓名/学号”等表头别名），录入作业与题目，并为每道题设置题型、知识点和评分标准；上传标准试卷模板后在图片上拖拽框选每题作答区域。
+2. **逐生批改**：选择作业后，页面按班级列出全部学生。点击学生卡片可拍照或上传该生答卷，后端按模板自动裁出每道题的作答图并逐题批阅，结果标注“正确 / 部分正确 / 错误”，并支持重新上传覆盖此前提交。
+3. **学情分析**：
+   - 本次作业：每道题的错误人数与错误学生名单、整体得分率、知识点掌握率，并可调用 AI 结合错误答卷图片分析可能错因与教学建议（分析结果写入 `assignment_analyses` 表）。
+   - 单个学生历史：按知识点/题型统计“完全掌握 / 尚未熟练掌握 / 完全不会”，并列出近期作业与薄弱题目。
+   - 全班历史：统计每个知识点已掌握与未掌握的学生人数，并标记“大部分学生已掌握 / 大部分学生还未掌握 / 部分学生掌握”。
+4. **单题 AI 批改**：临时上传一道试题与学生作答，填写满分和评分标准，调用 `/api/ai-grade` 由 DeepSeek 即时给出评分、扣分点与改进建议，并保存到批改历史。
+
+原独立的试卷批改入口已合并到作业批改工作台：`grading.html` 会跳转到作业设置，`ai-grading.html` 会跳转到单题 AI 批改，不再单独出现在教师控制台。
+
+掌握度阈值：得分率 `>= 85%` 为“完全掌握”，`>= 45%` 为“尚未熟练掌握”，低于 `45%` 为“完全不会”。
+
+### 相关 API
+
+均通过 `/api/mvp?action=...` 调用：
+
+| 方法 | action | 说明 |
+| --- | --- | --- |
+| GET | `assignment-overview&examId=` | 作业概况与学生批改状态 |
+| GET | `student-submission&batchId=&studentId=&includeImages=1` | 单个学生答卷与逐题评分 |
+| GET | `batch-analysis&batchId=` | 本次作业学情分析 |
+| GET | `student-history&studentId=` | 单个学生历史学情 |
+| GET | `class-history&classId=` | 全班历史学情 |
+| POST | `import-students` | 通过 Excel/CSV 导入班级学生 |
+| POST | `grade-student` | 上传单个学生答卷并生成裁切与评分任务 |
+| POST | `grade-next` | 认领并批阅下一道题（可传 `studentId`） |
+| POST | `analyze-batch` | AI 分析本次作业错因并保存 |
+
+Excel 解析使用服务端依赖 `xlsx`，导入时不会在浏览器端保存文件内容。
+
+单题 AI 批改复用现有 `POST /api/ai-grade` 接口（DeepSeek 视觉评分），评分结果会写入 AI 批改历史。
 
 ## Docker 部署
 

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>增加班级 - AI数智作业平台</title>
+    <link rel="stylesheet" href="./styles.css?v=20261029-auth" />
+    <link rel="stylesheet" href="./shell.css?v=20261029-auth" />
+    <script src="./auth.js"></script>
+    <script>window.AppAuth.requireAuth();</script>
+  </head>
+  <body>
+    <main class="console-shell class-setup-shell" aria-labelledby="class-setup-title">
+      <header class="console-topbar">
+        <a class="console-brand" href="./teacher.html" aria-label="返回教师控制台">
+          <span class="logo-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
+              <path d="M7.2 9.3h3.2M7.2 12.5h3.2M13.6 9.3h3.2M13.6 12.5h3.2" />
+            </svg>
+          </span>
+          <span>AI数智作业平台</span>
+        </a>
+
+        <div class="topbar-actions">
+          <a class="back-link" href="./teacher.html">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M19 12H5M11 6l-6 6 6 6" />
+            </svg>
+            返回控制台
+          </a>
+          <div class="topbar-actions-mount" data-topbar-actions></div>
+        </div>
+      </header>
+
+      <section class="class-setup-main">
+        <div class="class-setup-heading">
+          <p class="console-kicker">班级管理</p>
+          <h1 id="class-setup-title">增加班级</h1>
+          <p>创建班级后，可通过 Excel 名单批量导入，也可以手动填写学生姓名与学号。保存后该班级会成为当前默认班级。</p>
+        </div>
+
+        <form class="class-setup-form" id="classSetupForm" novalidate>
+          <article class="class-setup-card">
+            <header>
+              <h2>班级信息</h2>
+              <p>填写班级名称，年级可用于区分不同学段。</p>
+            </header>
+            <div class="setup-field-grid">
+              <label class="field-control">
+                <span>班级名称</span>
+                <input name="name" placeholder="例如：高一 3 班" maxlength="40" required />
+              </label>
+              <label class="field-control">
+                <span>年级</span>
+                <input name="grade" placeholder="例如：高一" maxlength="20" />
+              </label>
+            </div>
+          </article>
+
+          <article class="class-setup-card">
+            <header>
+              <h2>学生信息</h2>
+              <p>选择一种方式添加学生，重复的学生会自动跳过。</p>
+            </header>
+
+            <div class="method-switch" role="tablist" aria-label="学生添加方式">
+              <button class="method-tab is-active" type="button" data-method="excel" role="tab" aria-selected="true">
+                Excel 批量导入
+              </button>
+              <button class="method-tab" type="button" data-method="manual" role="tab" aria-selected="false">
+                手动填写
+              </button>
+            </div>
+
+            <div class="method-panel" data-method-panel="excel">
+              <label class="upload-tile class-excel-tile" for="classExcelFile">
+                <input id="classExcelFile" type="file" accept=".xlsx,.xls,.csv" />
+                <span class="upload-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img">
+                    <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
+                    <path d="M14 3.8v5h5M9.5 14h5M9.5 17h3" />
+                  </svg>
+                </span>
+                <span>
+                  <strong id="classExcelFileName">选择 Excel 学生名单</strong>
+                  <small>支持 .xlsx、.xls、.csv，表头需包含“姓名”，可选“学号”</small>
+                </span>
+              </label>
+              <p class="class-excel-hint">导入后可继续在作业批改页面查看和补充学生名单。</p>
+            </div>
+
+            <div class="method-panel" data-method-panel="manual" hidden>
+              <div class="manual-student-list" id="manualStudentList"></div>
+              <button class="add-student-row" id="addStudentRow" type="button">
+                <span aria-hidden="true">+</span>
+                添加一名学生
+              </button>
+            </div>
+          </article>
+
+          <div class="class-setup-actions">
+            <span class="class-setup-status" id="classSetupStatus" role="status"></span>
+            <button class="primary-button class-setup-submit" type="submit">保存班级并导入学生</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="./shell.js?v=20261029-auth"></script>
+    <script src="./class-setup.js?v=20261029-auth"></script>
+  </body>
+</html>
