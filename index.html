@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>教师登录 - AI数智作业平台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261029-auth" />
-    <link rel="stylesheet" href="./shell.css?v=20261029-auth" />
+    <link rel="stylesheet" href="./styles.css?v=20261029-login" />
+    <link rel="stylesheet" href="./shell.css?v=20261029-login" />
     <script src="./auth.js"></script>
   </head>
   <body>
-    <main class="page-shell" aria-labelledby="page-title">
-      <section class="brand-panel">
-        <div class="brand-mark" aria-label="AI数智作业平台">
+    <main class="page-shell login-shell" aria-labelledby="page-title">
+      <div class="login-stack">
+        <div class="login-brand" aria-label="AI数智作业平台">
           <span class="logo-box" aria-hidden="true">
             <svg viewBox="0 0 24 24" role="img">
               <path d="M4.5 5.5h5.3c1 0 1.8.4 2.2 1.1.4-.7 1.2-1.1 2.2-1.1h5.3v12.2h-5.4c-.9 0-1.6.2-2.1.8-.5-.6-1.2-.8-2.1-.8H4.5V5.5Z" />
@@ -21,75 +21,50 @@
           <span>AI数智作业平台</span>
         </div>
 
-        <div class="hero-copy">
-          <h1 id="page-title">让学习更高效，<br />让成长更简单</h1>
-          <p>专为师生打造的现代化智慧教学空间</p>
-        </div>
+        <section class="login-card login-card-auth" aria-label="教师登录">
+          <header>
+            <h1 id="page-title">教师登录</h1>
+            <p>请输入教师账号与密码后进入控制台</p>
+          </header>
 
-        <ul class="login-features" aria-label="平台能力">
-          <li>
-            <span aria-hidden="true">01</span>
-            <strong>名单一次导入</strong>
-            <small>按班级管理学生，批改时自动使用默认班级。</small>
-          </li>
-          <li>
-            <span aria-hidden="true">02</span>
-            <strong>逐题 AI 批改</strong>
-            <small>拍照或扫描答卷，自动判对错并生成学情分析。</small>
-          </li>
-          <li>
-            <span aria-hidden="true">03</span>
-            <strong>历史学情沉淀</strong>
-            <small>按知识点和题型回顾班级与学生的掌握变化。</small>
-          </li>
-        </ul>
-      </section>
-
-      <section class="login-card login-card-auth" aria-label="教师登录">
-        <header>
-          <h2>教师登录</h2>
-          <p>请输入教师账号与密码后进入控制台</p>
-        </header>
-
-        <form class="login-form" id="loginForm" novalidate>
-          <label class="login-field">
-            <span>教师账号</span>
-            <input
-              name="account"
-              type="text"
-              inputmode="numeric"
-              autocomplete="username"
-              placeholder="请输入教师账号"
-              required
-            />
-          </label>
-
-          <label class="login-field">
-            <span>登录密码</span>
-            <span class="password-wrap">
+          <form class="login-form" id="loginForm" novalidate>
+            <label class="login-field">
+              <span>教师账号</span>
               <input
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                placeholder="请输入登录密码"
+                name="account"
+                type="text"
+                inputmode="numeric"
+                autocomplete="username"
+                placeholder="请输入教师账号"
                 required
               />
-              <button class="password-toggle" id="passwordToggle" type="button" aria-label="显示密码">显示</button>
-            </span>
-          </label>
+            </label>
 
-          <p class="login-error" id="loginError" role="alert" hidden></p>
+            <label class="login-field">
+              <span>登录密码</span>
+              <span class="password-wrap">
+                <input
+                  name="password"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="请输入登录密码"
+                  required
+                />
+                <button class="password-toggle" id="passwordToggle" type="button" aria-label="显示密码">显示</button>
+              </span>
+            </label>
 
-          <button class="login-submit" type="submit">
-            <span>进入教师控制台</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 12h13M13 6l6 6-6 6" />
-            </svg>
-          </button>
+            <p class="login-error" id="loginError" role="alert" hidden></p>
 
-          <p class="login-hint">测试账号：018　密码：018018</p>
-        </form>
-      </section>
+            <button class="login-submit" type="submit">
+              <span>进入教师控制台</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h13M13 6l6 6-6 6" />
+              </svg>
+            </button>
+          </form>
+        </section>
+      </div>
     </main>
 
     <script src="./script.js"></script>

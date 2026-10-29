@@ -75,23 +75,6 @@ button {
   transform: rotate(28deg);
 }
 
-.brand-panel {
-  align-self: center;
-  max-width: 720px;
-  padding-top: 24px;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 16px;
-  color: var(--orange-strong);
-  font-size: clamp(22px, 1.9vw, 30px);
-  font-weight: 800;
-  line-height: 1;
-  margin-bottom: clamp(56px, 7vh, 72px);
-}
-
 .logo-box,
 .icon-box {
   display: inline-grid;
@@ -118,23 +101,6 @@ button {
   stroke-linejoin: round;
 }
 
-.hero-copy h1 {
-  margin: 0;
-  color: #1b2433;
-  font-size: clamp(46px, 4.8vw, 72px);
-  line-height: 1.18;
-  font-weight: 900;
-  letter-spacing: 0;
-}
-
-.hero-copy p {
-  margin: clamp(24px, 3vh, 34px) 0 0;
-  color: #647084;
-  font-size: clamp(20px, 1.65vw, 26px);
-  line-height: 1.5;
-  font-weight: 500;
-}
-
 .login-card {
   width: min(100%, 700px);
   padding: clamp(44px, 4.1vw, 58px) clamp(48px, 4vw, 50px) 50px;
@@ -147,7 +113,7 @@ button {
   margin-bottom: 48px;
 }
 
-.login-card h2 {
+.login-card h1 {
   margin: 0;
   color: #061126;
   font-size: clamp(34px, 3vw, 42px);
@@ -299,15 +265,6 @@ button {
     padding: 44px 24px;
   }
 
-  .brand-panel {
-    justify-self: center;
-    width: min(100%, 700px);
-  }
-
-  .brand-mark {
-    margin-bottom: 34px;
-  }
-
   .login-card {
     justify-self: center;
   }
@@ -332,22 +289,9 @@ button {
     height: 42vh;
   }
 
-  .brand-mark {
-    gap: 12px;
-    margin-bottom: 28px;
-  }
-
   .logo-box {
     width: 44px;
     height: 44px;
-  }
-
-  .hero-copy h1 {
-    font-size: 42px;
-  }
-
-  .hero-copy p {
-    font-size: 18px;
   }
 
   .login-card {
@@ -359,7 +303,7 @@ button {
     margin-bottom: 28px;
   }
 
-  .login-card h2 {
+  .login-card h1 {
     font-size: 30px;
   }
 

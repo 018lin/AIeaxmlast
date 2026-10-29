@@ -1,53 +1,47 @@
 /* Auth login & console account shell */
-.login-features {
-  margin: clamp(36px, 5vh, 54px) 0 0;
-  padding: 0;
-  display: grid;
-  gap: 14px;
-  list-style: none;
-}
-
-.login-features li {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  column-gap: 14px;
+.login-shell {
+  display: flex;
   align-items: center;
-  padding: 14px 18px;
-  border: 1px solid rgba(240, 220, 201, 0.85);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.58);
+  justify-content: center;
+  padding: clamp(32px, 7vh, 80px) 20px;
+  min-height: 100svh;
 }
 
-.login-features li > span {
-  grid-row: 1 / span 2;
-  display: inline-grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+.login-stack {
+  width: min(100%, 460px);
+  display: grid;
+  gap: clamp(22px, 3.4vh, 30px);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   color: var(--orange-strong);
-  background: var(--orange-soft);
-  font-size: 13px;
-  font-weight: 900;
-  letter-spacing: 0.04em;
+  font-size: clamp(20px, 2.2vw, 24px);
+  font-weight: 800;
+  line-height: 1;
 }
 
-.login-features strong {
-  color: #1b2433;
-  font-size: 15px;
-  font-weight: 900;
+.login-brand .logo-box {
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
 }
 
-.login-features small {
-  color: #7c879a;
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 500;
+.login-brand .logo-box svg {
+  width: 27px;
+  height: 27px;
 }
 
-.login-card-auth header {
-  margin-bottom: 34px;
+.login-shell .login-card {
+  width: 100%;
+}
+
+.login-shell .login-card-auth header {
+  margin-bottom: clamp(24px, 3.4vh, 34px);
+  text-align: center;
 }
 
 .login-form {
@@ -168,13 +162,6 @@
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.login-hint {
-  margin: 0;
-  color: #9aa4b5;
-  font-size: 13px;
-  text-align: center;
 }
 
 .topbar-actions {
@@ -758,10 +745,6 @@
     max-width: 160px;
   }
 
-  .login-features {
-    display: none;
-  }
-
   .class-setup-card {
     padding: 20px;
   }
@@ -769,22 +752,80 @@
 
 @media (max-width: 620px) {
   .console-topbar {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px 10px;
   }
 
-  .topbar-actions {
-    width: 100%;
-    justify-content: space-between;
-  }
-
+  .topbar-actions,
   .topbar-actions-mount {
-    flex: 1;
-    justify-content: flex-end;
+    display: contents;
+  }
+
+  .console-brand {
+    grid-column: 1;
+    grid-row: 1;
+    gap: 9px;
+    min-width: 0;
+    font-size: 16px;
+    white-space: nowrap;
+  }
+
+  .console-brand .logo-box {
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+  }
+
+  .console-brand .logo-box svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .back-link {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    min-height: 38px;
+    padding: 0 12px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  .avatar-wrap {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .class-switcher {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
   }
 
   .class-pill {
-    min-height: 44px;
-    padding: 4px 10px;
+    width: 100%;
+    min-height: 46px;
+    gap: 9px;
+    justify-content: flex-start;
+    padding: 5px 12px;
+  }
+
+  .class-pill-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+  }
+
+  .class-pill-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .class-pill-copy {
+    flex: 1;
   }
 
   .class-pill-copy span {
@@ -792,18 +833,32 @@
   }
 
   .class-pill-copy strong {
-    max-width: 128px;
-    font-size: 13px;
+    max-width: none;
+    font-size: 14px;
+  }
+
+  .class-pill-chevron {
+    margin-left: auto;
   }
 
   .teacher-avatar {
-    width: 44px;
-    height: 44px;
+    width: 42px;
+    height: 42px;
+  }
+
+  .avatar-fallback {
+    font-size: 19px;
   }
 
   .class-menu {
-    right: -52px;
-    width: min(280px, calc(100vw - 32px));
+    right: 0;
+    width: 100%;
+    max-height: min(420px, 64vh);
+    overflow: auto;
+  }
+
+  .avatar-menu {
+    right: 0;
   }
 
   .setup-field-grid {
@@ -826,5 +881,150 @@
 
   .class-setup-submit {
     width: 100%;
+  }
+
+  .console-shell {
+    padding: 22px 16px 40px;
+  }
+
+  .console-hero {
+    margin: 34px auto 22px;
+  }
+
+  .console-hero > div {
+    max-width: none;
+  }
+
+  .console-kicker {
+    margin-bottom: 10px;
+    font-size: 15px;
+  }
+
+  .console-hero h1 {
+    font-size: clamp(30px, 8.6vw, 38px);
+    line-height: 1.2;
+  }
+
+  .console-hero p:not(.console-kicker) {
+    margin-top: 14px;
+    font-size: 15.5px;
+    line-height: 1.65;
+  }
+
+  .module-grid {
+    gap: 18px;
+  }
+
+  .module-card {
+    min-height: 0;
+    gap: 18px;
+    padding: 22px 18px;
+    border-radius: 18px;
+  }
+
+  .module-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 15px;
+  }
+
+  .module-icon svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  .module-copy {
+    gap: 10px;
+  }
+
+  .module-copy strong {
+    font-size: clamp(24px, 6.6vw, 30px);
+    line-height: 1.25;
+  }
+
+  .module-copy span {
+    max-width: none;
+    font-size: 15px;
+    line-height: 1.68;
+  }
+
+  .module-action {
+    min-height: 42px;
+    padding: 0 16px;
+    font-size: 15px;
+  }
+
+  .grading-shell {
+    padding: 22px 16px 42px;
+  }
+
+  .grading-header {
+    margin: 30px auto 22px;
+  }
+
+  .grading-header h1 {
+    font-size: clamp(28px, 8vw, 36px);
+    line-height: 1.2;
+  }
+
+  .grading-header p:not(.console-kicker) {
+    margin-top: 12px;
+    font-size: 15.5px;
+    line-height: 1.65;
+  }
+}
+
+@media (max-width: 430px) {
+  .console-topbar {
+    gap: 10px 8px;
+  }
+
+  .console-brand {
+    font-size: 15px;
+  }
+
+  .back-link {
+    padding: 0 10px;
+  }
+
+  .back-link-text {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-shell {
+    padding: 24px 16px;
+  }
+
+  .login-stack {
+    gap: 20px;
+  }
+
+  .login-brand {
+    font-size: 20px;
+  }
+
+  .login-brand .logo-box {
+    width: 42px;
+    height: 42px;
+  }
+
+  .login-brand .logo-box svg {
+    width: 25px;
+    height: 25px;
+  }
+
+  .login-shell .login-card {
+    padding: 28px 20px 24px;
+    border-radius: 22px;
+  }
+
+  .login-shell .login-card h1 {
+    font-size: 28px;
+  }
+
+  .login-shell .login-card header p {
+    font-size: 15px;
   }
 }
