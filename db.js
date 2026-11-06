@@ -615,6 +615,53 @@ async function listExams() {
   return result.rows.map(mapExam);
 }
 
+async function listExamProgress() {
+  const result = await getPool().query(`
+    SELECT
+      e.id AS exam_id,
+      COALESCE(class_stats.student_count, 0) AS student_count,
+      COALESCE(page_stats.submitted_count, 0) AS submitted_count,
+      COALESCE(result_stats.graded_student_count, 0) AS graded_student_count
+    FROM exams e
+    LEFT JOIN (
+      SELECT class_id, COUNT(*)::int AS student_count
+      FROM students
+      GROUP BY class_id
+    ) class_stats ON class_stats.class_id = e.class_id
+    LEFT JOIN LATERAL (
+      SELECT b.id
+      FROM scan_batches b
+      WHERE b.exam_id = e.id
+      ORDER BY b.created_at DESC
+      LIMIT 1
+    ) latest_batch ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COUNT(DISTINCT p.student_id)::int AS submitted_count
+      FROM scanned_pages p
+      WHERE p.batch_id = latest_batch.id
+    ) page_stats ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS graded_student_count
+      FROM (
+        SELECT r.student_id
+        FROM grading_results r
+        WHERE r.batch_id = latest_batch.id
+        GROUP BY r.student_id
+        HAVING COUNT(*) >= GREATEST((
+          SELECT COUNT(*) FROM exam_questions q WHERE q.exam_id = e.id
+        ), 1)
+      ) fully_graded
+    ) result_stats ON TRUE
+  `);
+
+  return result.rows.map((row) => ({
+    examId: row.exam_id,
+    studentCount: Number(row.student_count || 0),
+    submittedCount: Number(row.submitted_count || 0),
+    gradedStudentCount: Number(row.graded_student_count || 0),
+  }));
+}
+
 async function createExamQuestion(payload) {
   const examId = payload.examId || "";
   const questionNo = String(payload.questionNo || "").trim();
@@ -3023,6 +3070,7 @@ module.exports = {
   importStudents,
   initDatabase,
   listClasses,
+  listExamProgress,
   listExamQuestions,
   listExams,
   listAiGradingHistory,

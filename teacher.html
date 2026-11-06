@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>教师控制台 - AI数智作业平台</title>
-    <link rel="stylesheet" href="./styles.css?v=20261029-topbar" />
+    <link rel="stylesheet" href="./styles.css?v=20261030-tools" />
     <link rel="stylesheet" href="./shell.css?v=20261029-topbar" />
     <script src="./auth.js"></script>
     <script>window.AppAuth.requireAuth();</script>
@@ -25,40 +25,59 @@
         <div class="topbar-actions" data-topbar-actions></div>
       </header>
 
-      <section class="module-grid" aria-label="教师功能模块">
-        <a class="module-card module-card-primary" href="./homework.html" aria-label="进入作业批改与学情分析">
-          <span class="module-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" role="img">
-              <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
-              <path d="M14 3.8v5h5M9.5 13h5M9.5 16.8h3.2" />
-              <path d="M4.8 7.2v13h9.4" />
-              <path d="M15.2 16.7l1.5 1.5 3.1-3.4" />
-            </svg>
-          </span>
-          <span class="module-copy">
-            <strong>作业批改与学情分析</strong>
-          </span>
-          <span class="module-action">
-            进入
-          </span>
-        </a>
+      <div class="console-modules-stack">
+        <section class="module-grid" aria-label="教师功能模块">
+          <a class="module-card module-card-primary" href="./homework.html" aria-label="进入作业批改与学情分析">
+            <span class="module-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M7 3.8h7.3L19 8.5v11.7H7V3.8Z" />
+                <path d="M14 3.8v5h5M9.5 13h5M9.5 16.8h3.2" />
+                <path d="M4.8 7.2v13h9.4" />
+                <path d="M15.2 16.7l1.5 1.5 3.1-3.4" />
+              </svg>
+            </span>
+            <span class="module-copy">
+              <strong>作业批改与学情分析</strong>
+            </span>
+            <span class="module-action">
+              进入
+            </span>
+          </a>
 
-        <a class="module-card" href="./batch-grading.html" aria-label="进入批量阅卷 MVP">
-          <span class="module-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" role="img">
-              <path d="M6 4.2h8.2L18 8v11.8H6V4.2Z" />
-              <path d="M14.2 4.2V8H18M8.8 11.5h6.4M8.8 14.8h4.4M4.2 7.3v12.5h9.5" />
-              <path d="M16.2 15.8l1.3 1.3 2.6-2.9" />
-            </svg>
-          </span>
-          <span class="module-copy">
-            <strong>批量阅卷 MVP</strong>
-          </span>
-          <span class="module-action">
-            进入
-          </span>
-        </a>
-      </section>
+          <a class="module-card" href="./batch-grading.html" aria-label="进入批量阅卷 MVP">
+            <span class="module-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M6 4.2h8.2L18 8v11.8H6V4.2Z" />
+                <path d="M14.2 4.2V8H18M8.8 11.5h6.4M8.8 14.8h4.4M4.2 7.3v12.5h9.5" />
+                <path d="M16.2 15.8l1.3 1.3 2.6-2.9" />
+              </svg>
+            </span>
+            <span class="module-copy">
+              <strong>批量阅卷 MVP</strong>
+            </span>
+            <span class="module-action">
+              进入
+            </span>
+          </a>
+        </section>
+
+        <section class="module-tools" aria-label="AI 工具">
+          <a class="tool-card" href="./ai-grading.html" aria-label="进入单题 AI 批改">
+            <span class="tool-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M5.5 4.5h13v15h-13v-15Z" />
+                <path d="M8.5 8h7M8.5 11h4" />
+                <path d="M13.2 16.2l2.6-2.6 3 3-2.6 2.6h-3v-3Z" />
+              </svg>
+            </span>
+            <span class="tool-copy">
+              <strong>单题 AI 批改</strong>
+              <small>上传试题与作答，快速获取评分、扣分点与改进建议</small>
+            </span>
+            <span class="tool-action">进入</span>
+          </a>
+        </section>
+      </div>
     </main>
 
     <script src="./shell.js?v=20261029-auth"></script>

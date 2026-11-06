@@ -4,7 +4,7 @@
   const AVATAR_KEY_PREFIX = "aihw.avatar.v1.";
   const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-  const ALLOWED_PAGES = ["teacher.html", "homework.html", "batch-grading.html", "class-setup.html"];
+  const ALLOWED_PAGES = ["teacher.html", "homework.html", "batch-grading.html", "class-setup.html", "ai-grading.html"];
 
   function readStorage(key) {
     try {

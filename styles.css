@@ -428,9 +428,12 @@ button {
   flex-direction: column;
 }
 
-.console-shell-modules .module-grid {
+.console-shell-modules .console-modules-stack {
+  width: 100%;
   margin-block: auto;
   padding-block: clamp(20px, 4vh, 52px);
+  display: grid;
+  gap: 22px;
 }
 
 .module-grid {
@@ -539,6 +542,84 @@ button {
   box-shadow: none;
 }
 
+.module-tools {
+  width: min(100%, 1320px);
+  margin: 0 auto;
+}
+
+.tool-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 24px;
+  border: 1px solid rgba(240, 220, 201, 0.95);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 14px 30px rgba(29, 34, 43, 0.05);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.tool-card:hover,
+.tool-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(255, 106, 22, 0.52);
+  box-shadow: 0 20px 40px rgba(255, 106, 22, 0.12);
+  outline: none;
+}
+
+.tool-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  color: var(--orange-strong);
+  background: var(--orange-soft);
+}
+
+.tool-icon svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tool-copy {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-copy strong {
+  color: #071226;
+  font-size: 19px;
+  font-weight: 900;
+}
+
+.tool-copy small {
+  color: #798397;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.tool-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 999px;
+  color: var(--orange-strong);
+  background: var(--orange-soft);
+  font-size: 14px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .console-shell {
     padding: 26px 18px 44px;
@@ -585,6 +666,37 @@ button {
   .module-icon svg {
     width: 36px;
     height: 36px;
+  }
+
+  .tool-card {
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 16px;
+  }
+
+  .tool-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 13px;
+  }
+
+  .tool-icon svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  .tool-copy strong {
+    font-size: 17px;
+  }
+
+  .tool-copy small {
+    display: none;
+  }
+
+  .tool-action {
+    min-height: 36px;
+    padding: 0 14px;
+    font-size: 13px;
   }
 }
 

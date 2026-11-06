@@ -3,6 +3,7 @@
     classes: [],
     students: [],
     exams: [],
+    examProgress: {},
     defaultClassId: "",
     questions: [],
     templates: [],
@@ -15,29 +16,37 @@
     pendingImage: "",
     captureStream: null,
     grading: false,
+    view: "list",
+    analysisTab: "students",
+    lastBatchAnalysis: null,
     historyMode: "student",
-    quickQuestion: null,
-    quickAnswer: null,
-    quickBusy: false,
+    drawerMode: "create",
+    wizardStep: 1,
+    drawerTimer: null,
+    examDrawerTimer: null,
   };
 
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
   const elements = {
-    refreshButton: $("#hwRefreshButton"),
-    classForm: $("#hwClassForm"),
-    importForm: $("#hwImportForm"),
-    importFile: $("#hwImportFile"),
-    importFileName: $("#hwImportFileName"),
-    importClassSelect: $("#importClassSelect"),
-    classList: $("#hwClassList"),
-    studentList: $("#hwStudentList"),
-    studentCount: $("#hwStudentCount"),
+    className: $("#hwClassName"),
+    classMeta: $("#hwClassMeta"),
+    examCards: $("#hwExamCards"),
+    listRefreshButton: $("#listRefreshButton"),
+    newExamButton: $("#newExamButton"),
     examForm: $("#hwExamForm"),
-    examList: $("#hwExamList"),
+    examDrawer: $("#examDrawer"),
+    examDrawerTitle: $("#examDrawerTitle"),
+    examDrawerHint: $("#examDrawerHint"),
+    wizardSteps: $("#wizardSteps"),
     questionForm: $("#hwQuestionForm"),
     questionList: $("#hwQuestionList"),
+    wizardBackButton: $("#wizardBackButton"),
+    wizardNextButton: $("#wizardNextButton"),
+    wizardSkipTemplateButton: $("#wizardSkipTemplateButton"),
+    wizardBackToQuestionsButton: $("#wizardBackToQuestionsButton"),
+    wizardFinishButton: $("#wizardFinishButton"),
     templateUpload: $("#hwTemplateUpload"),
     templateFileName: $("#hwTemplateFileName"),
     templateStage: $("#hwTemplateStage"),
@@ -45,11 +54,14 @@
     regionQuestionSelect: $("#hwRegionQuestionSelect"),
     saveRegionButton: $("#hwSaveRegionButton"),
     regionList: $("#hwRegionList"),
+    workHeaderTitle: $("#workHeaderTitle"),
+    workHeaderMeta: $("#workHeaderMeta"),
     workExamSelect: $("#workExamSelect"),
     workRefreshButton: $("#workRefreshButton"),
+    editExamButton: $("#editExamButton"),
     workSummary: $("#workSummary"),
     studentCardGrid: $("#studentCardGrid"),
-    studentWorkPanel: $("#studentWorkPanel"),
+    studentDrawer: $("#studentDrawer"),
     workStudentName: $("#workStudentName"),
     workStudentMeta: $("#workStudentMeta"),
     closeWorkPanel: $("#closeWorkPanel"),
@@ -60,24 +72,13 @@
     gradeStudentButton: $("#gradeStudentButton"),
     workStatusText: $("#workStatusText"),
     studentResultArea: $("#studentResultArea"),
-    analysisExamSelect: $("#analysisExamSelect"),
-    loadAnalysisButton: $("#loadAnalysisButton"),
-    assignmentAnalysis: $("#assignmentAnalysis"),
+    assignmentOverview: $("#assignmentOverview"),
+    assignmentQuestions: $("#assignmentQuestions"),
+    assignmentKnowledge: $("#assignmentKnowledge"),
     historyClassSelect: $("#historyClassSelect"),
     historyStudentSelect: $("#historyStudentSelect"),
     loadHistoryButton: $("#loadHistoryButton"),
     historyAnalysis: $("#historyAnalysis"),
-    quickQuestionUpload: $("#quickQuestionUpload"),
-    quickAnswerUpload: $("#quickAnswerUpload"),
-    quickQuestionFileName: $("#quickQuestionFileName"),
-    quickAnswerFileName: $("#quickAnswerFileName"),
-    quickQuestionPreview: $("#quickQuestionPreview"),
-    quickAnswerPreview: $("#quickAnswerPreview"),
-    quickMaxScore: $("#quickMaxScore"),
-    quickRubric: $("#quickRubric"),
-    quickGradeButton: $("#quickGradeButton"),
-    quickStatusText: $("#quickStatusText"),
-    quickResultArea: $("#quickResultArea"),
     cameraModal: $("#cameraModal"),
     cameraVideo: $("#cameraVideo"),
     cameraHint: $("#cameraHint"),
@@ -133,30 +134,6 @@
       image.onerror = reject;
       image.src = src;
     });
-  }
-
-  function loadImageElement(src) {
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = reject;
-      image.src = src;
-    });
-  }
-
-  async function compressImageDataUrl(src, maxWidth = 1400) {
-    const image = await loadImageElement(src);
-    const scale = Math.min(1, maxWidth / image.naturalWidth);
-
-    if (scale >= 1) {
-      return src;
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.85);
   }
 
   function formatPercent(rate) {
@@ -225,14 +202,6 @@
     return fallback;
   }
 
-  function getScopedStudents() {
-    if (!state.defaultClassId) {
-      return state.students;
-    }
-
-    return state.students.filter((student) => student.classId === state.defaultClassId);
-  }
-
   function renderCoreSelects() {
     $$('[data-select="classes"]').forEach((select) => {
       fillSelect(
@@ -275,72 +244,103 @@
     });
   }
 
-  function renderClassList() {
-    if (!state.classes.length) {
-      elements.classList.innerHTML = '<p class="empty-text">暂无班级，请先新增或导入。</p>';
+  function renderClassContext() {
+    const classItem = state.classes.find((item) => item.id === state.defaultClassId);
+    const studentCount = state.students.filter((student) => student.classId === state.defaultClassId).length;
+
+    elements.className.textContent = classItem ? classItem.name : "还没有班级";
+    elements.classMeta.textContent = classItem
+      ? `${studentCount} 名学生${classItem.grade ? ` · ${classItem.grade}` : ""}`
+      : "去班级管理创建班级并导入名单";
+  }
+
+  function examStatusInfo(exam, progress) {
+    if (!exam.questionCount) {
+      return { label: "待录入题目", tone: "draft" };
+    }
+
+    if (!progress || !progress.studentCount) {
+      return { label: "缺学生名单", tone: "muted" };
+    }
+
+    if (progress.gradedStudentCount >= progress.studentCount) {
+      return { label: "已完成", tone: "graded" };
+    }
+
+    if (progress.submittedCount > 0) {
+      return { label: "批改中", tone: "grading" };
+    }
+
+    return { label: "未开始", tone: "not_submitted" };
+  }
+
+  function renderExamCards() {
+    if (!state.exams.length) {
+      elements.examCards.innerHTML = `
+        <div class="hw-empty-card">
+          <strong>还没有作业</strong>
+          <p>新建一份作业，录入题目后即可开始拍照批改。</p>
+          <button class="primary-button" type="button" data-exam-action="create">新建作业</button>
+        </div>
+      `;
       return;
     }
 
-    const orderedClasses = [...state.classes].sort(
-      (left, right) =>
-        Number(right.id === state.defaultClassId) - Number(left.id === state.defaultClassId)
-    );
+    elements.examCards.innerHTML = state.exams
+      .map((exam) => {
+        const progress = state.examProgress[exam.id] || null;
+        const status = examStatusInfo(exam, progress);
+        const studentCount = progress?.studentCount || 0;
+        const gradedCount = progress?.gradedStudentCount || 0;
+        const percent = studentCount ? Math.round((gradedCount / studentCount) * 100) : 0;
+        const meta = [
+          exam.className || "未绑定班级",
+          exam.subject || "未填科目",
+          exam.examDate ? formatDate(exam.examDate) : "",
+          `${exam.questionCount} 题`,
+          `${formatNumber(exam.totalScore)} 分`,
+        ]
+          .filter(Boolean)
+          .join(" · ");
 
-    elements.classList.innerHTML = orderedClasses
-      .map((classItem) => {
-        const count = state.students.filter((student) => student.classId === classItem.id).length;
-        const isDefault = classItem.id === state.defaultClassId;
         return `
-          <div class="mini-item">
-            <strong>${escapeHtml(classItem.name)}${isDefault ? '<span class="default-class-tag">默认</span>' : ""}</strong>
-            <span>${escapeHtml(classItem.grade || "未填年级")}｜${count} 名学生</span>
-          </div>
+          <article class="hw-exam-card ${exam.id === state.activeExamId ? "is-active" : ""}">
+            <div class="hw-exam-main">
+              <div class="hw-exam-title">
+                <strong>${escapeHtml(exam.name)}</strong>
+                <span class="status-badge status-${status.tone}">${status.label}</span>
+              </div>
+              <p class="hw-exam-meta">${escapeHtml(meta)}</p>
+              <div class="hw-exam-progress">
+                <div class="hw-bar"><i style="width: ${percent}%"></i></div>
+                <span>${studentCount ? `已批改 ${gradedCount} / ${studentCount}` : "暂无学生名单"}</span>
+              </div>
+            </div>
+            <div class="hw-exam-actions">
+              <button class="primary-button" type="button" data-exam-action="work" data-exam-id="${escapeHtml(
+                exam.id
+              )}">继续批改</button>
+              <button class="ghost-button" type="button" data-exam-action="analysis" data-exam-id="${escapeHtml(
+                exam.id
+              )}">查看分析</button>
+            </div>
+          </article>
         `;
       })
       .join("");
   }
 
-  function renderStudentRoster() {
-    const students = getScopedStudents();
-    const currentClass = state.classes.find((item) => item.id === state.defaultClassId);
-
-    elements.studentCount.textContent = `${students.length} 人`;
-
-    if (!students.length) {
-      elements.studentList.innerHTML = currentClass
-        ? `<p class="empty-text">「${escapeHtml(currentClass.name)}」暂无学生，请导入 Excel 名单或手动添加。</p>`
-        : '<p class="empty-text">暂无学生，请导入 Excel 名单。</p>';
-      return;
+  async function loadExamProgress() {
+    try {
+      const payload = await apiRequest("exam-progress", { cache: "no-store" });
+      state.examProgress = Object.fromEntries(
+        (payload.progress || []).map((item) => [item.examId, item])
+      );
+    } catch {
+      state.examProgress = {};
     }
 
-    elements.studentList.innerHTML = students
-      .map(
-        (student) => `
-          <span class="roster-chip" title="${escapeHtml(student.className || "未分班")}">
-            <strong>${escapeHtml(student.name)}</strong>
-            <small>${escapeHtml(student.studentNo || "无学号")}</small>
-          </span>
-        `
-      )
-      .join("");
-  }
-
-  function renderExamList() {
-    if (!state.exams.length) {
-      elements.examList.innerHTML = '<p class="empty-text">暂无作业，请先新建作业。</p>';
-      return;
-    }
-
-    elements.examList.innerHTML = state.exams
-      .map(
-        (exam) => `
-          <button class="mini-item exam-list-item ${exam.id === state.activeExamId ? "is-active" : ""}" type="button" data-exam-id="${escapeHtml(exam.id)}">
-            <strong>${escapeHtml(exam.name)}</strong>
-            <span>${escapeHtml(exam.className || "未绑定班级")}｜${escapeHtml(exam.subject || "未填科目")}｜${exam.questionCount} 题｜${formatNumber(exam.totalScore)} 分</span>
-          </button>
-        `
-      )
-      .join("");
+    renderExamCards();
   }
 
   function renderQuestionList() {
@@ -444,7 +444,6 @@
     renderQuestionList();
     renderRegionQuestionSelect();
     renderTemplate();
-    renderExamList();
 
     if (state.currentTemplate) {
       const regionPayload = await apiRequest(
@@ -473,13 +472,13 @@
 
     renderCoreSelects();
     syncExamSelects();
-    renderClassList();
-    renderStudentRoster();
-    renderExamList();
-    await loadExamScope(state.activeExamId);
+    renderClassContext();
+    renderExamCards();
+    await Promise.all([loadExamScope(state.activeExamId), loadExamProgress()]);
 
     if (state.overview && state.overview.exam?.id !== state.activeExamId) {
       state.overview = null;
+      state.lastBatchAnalysis = null;
       closeStudentPanel();
     }
   }
@@ -487,89 +486,14 @@
   async function handleExamChange(examId) {
     state.activeExamId = examId || "";
     syncExamSelects();
-    renderExamList();
+    renderExamCards();
     state.overview = null;
+    state.lastBatchAnalysis = null;
     closeStudentPanel();
     await loadExamScope(state.activeExamId);
 
-    if (!document.querySelector('[data-view-panel="work"]')?.hidden) {
-      await loadWorkOverview();
-    }
-
-    if (!document.querySelector('[data-view-panel="analysis"]')?.hidden) {
-      await loadBatchAnalysis();
-    }
-  }
-
-  function bindForm(form, action, getExtraPayload, afterSave) {
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = form.querySelector("button[type='submit']");
-      button.disabled = true;
-
-      try {
-        const payload = await apiRequest(action, {
-          method: "POST",
-          body: JSON.stringify({
-            ...formPayload(form),
-            ...(getExtraPayload ? getExtraPayload() : {}),
-          }),
-        });
-        form.reset();
-        if (afterSave) {
-          await afterSave(payload);
-        } else {
-          await loadBootstrap();
-        }
-      } catch (error) {
-        alert(error.message);
-      } finally {
-        button.disabled = false;
-      }
-    });
-  }
-
-  async function handleImportStudents(event) {
-    event.preventDefault();
-    const button = elements.importForm.querySelector("button[type='submit']");
-    const file = elements.importFile.files?.[0];
-    const classId = elements.importForm.elements.classId.value;
-    const className = elements.importForm.elements.className.value.trim();
-
-    if (!file) {
-      alert("请选择 Excel 学生名单文件。");
-      return;
-    }
-
-    if (!classId && !className) {
-      alert("请选择已有班级，或填写新班级名称。");
-      return;
-    }
-
-    button.disabled = true;
-
-    try {
-      const payload = await apiRequest("import-students", {
-        method: "POST",
-        body: JSON.stringify({
-          classId,
-          className,
-          grade: elements.importForm.elements.grade.value,
-          name: file.name,
-          file: await readFileAsDataUrl(file),
-        }),
-      });
-      alert(`导入完成：新增 ${payload.created} 人，跳过重复 ${payload.skipped} 人。`);
-      window.AppAuth?.setDefaultClassId?.(payload.classItem.id);
-      elements.importForm.reset();
-      elements.importFile.value = "";
-      elements.importFileName.textContent = "支持 .xlsx、.xls、.csv";
-      elements.importClassSelect.value = payload.classItem.id;
-      await loadBootstrap();
-    } catch (error) {
-      alert(error.message);
-    } finally {
-      button.disabled = false;
+    if (state.view === "assignment") {
+      await loadAssignment();
     }
   }
 
@@ -710,22 +634,43 @@
   }
 
   function switchView(view) {
+    state.view = view;
     $$(".hw-tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.view === view));
     $$("[data-view-panel]").forEach((panel) => {
       panel.hidden = panel.dataset.viewPanel !== view;
       panel.classList.toggle("is-active", panel.dataset.viewPanel === view);
     });
 
-    if (view === "work") {
-      loadWorkOverview().catch((error) => alert(error.message));
+    if (view === "list") {
+      loadExamProgress().catch(() => {});
     }
 
-    if (view === "analysis") {
-      loadBatchAnalysis().catch((error) => alert(error.message));
+    if (view === "assignment") {
+      loadAssignment().catch((error) => alert(error.message));
     }
 
-    if (view === "setup") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+    if (view === "history") {
+      renderHistoryStudentSelect();
+    }
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function applyAnalysisTabUI(tab) {
+    $$(".hw-subtab").forEach((button) =>
+      button.classList.toggle("is-active", button.dataset.analysisTab === tab)
+    );
+    $$("[data-analysis-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.analysisPanel !== tab;
+    });
+  }
+
+  function switchAnalysisTab(tab) {
+    state.analysisTab = tab;
+    applyAnalysisTabUI(tab);
+
+    if (tab !== "students") {
+      loadBatchAnalysis().catch((error) => emptyAnalysis(error.message));
     }
   }
 
@@ -741,10 +686,13 @@
     return labels[status] || "未提交";
   }
 
-  async function loadWorkOverview() {
+  async function loadAssignment() {
     if (!state.activeExamId) {
-      elements.workSummary.innerHTML = '<p class="empty-text">请先在作业设置中新建作业。</p>';
-      elements.studentCardGrid.innerHTML = "";
+      elements.workHeaderTitle.textContent = "本次作业";
+      elements.workHeaderMeta.textContent = "先在作业列表新建或选择一份作业。";
+      elements.workSummary.innerHTML = "";
+      elements.studentCardGrid.innerHTML = '<p class="empty-text">暂无作业，请先在作业列表新建。</p>';
+      emptyAnalysis("暂无学情数据。");
       return;
     }
 
@@ -752,8 +700,13 @@
       cache: "no-store",
     });
     state.overview = payload;
+    renderAssignmentHeader();
     renderWorkSummary();
     renderStudentCards();
+
+    if (state.analysisTab !== "students") {
+      await loadBatchAnalysis();
+    }
 
     if (state.activeStudentId) {
       const student = payload.students.find((item) => item.id === state.activeStudentId);
@@ -764,6 +717,25 @@
         closeStudentPanel();
       }
     }
+  }
+
+  function renderAssignmentHeader() {
+    const exam = state.overview?.exam;
+
+    if (!exam) {
+      return;
+    }
+
+    elements.workHeaderTitle.textContent = exam.name;
+    elements.workHeaderMeta.textContent = [
+      exam.className || "未绑定班级",
+      exam.subject || "未填科目",
+      exam.examDate ? formatDate(exam.examDate) : "",
+      `${exam.questionCount} 题`,
+      `总分 ${formatNumber(exam.totalScore)}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
 
   function renderWorkSummary() {
@@ -778,27 +750,24 @@
     const averageRate = summary.gradedCount && summary.maxScore
       ? summary.totalAchieved / (summary.gradedCount * summary.maxScore)
       : 0;
+    const percent = summary.studentCount
+      ? Math.round((summary.gradedCount / summary.studentCount) * 100)
+      : 0;
 
     elements.workSummary.innerHTML = `
-      <div class="hw-metric">
-        <span>班级学生</span>
-        <strong>${summary.studentCount}</strong>
+      <div class="hw-metrics">
+        <div class="hw-metric"><span>班级学生</span><strong>${summary.studentCount}</strong></div>
+        <div class="hw-metric"><span>已上传</span><strong>${summary.submittedCount}</strong></div>
+        <div class="hw-metric"><span>已批改</span><strong>${summary.gradedCount}</strong></div>
+        <div class="hw-metric"><span>平均得分率</span><strong>${formatPercent(averageRate)}</strong></div>
       </div>
-      <div class="hw-metric">
-        <span>已上传</span>
-        <strong>${summary.submittedCount}</strong>
-      </div>
-      <div class="hw-metric">
-        <span>已批改</span>
-        <strong>${summary.gradedCount}</strong>
-      </div>
-      <div class="hw-metric">
-        <span>平均得分率</span>
-        <strong>${formatPercent(averageRate)}</strong>
-      </div>
-      <div class="hw-metric hw-metric-action">
-        <span>本次作业</span>
-        <button class="ghost-button" type="button" data-action="open-analysis">查看学情分析</button>
+      <div class="hw-progress-card">
+        <div class="hw-progress-head">
+          <span>批改进度</span>
+          <strong>${summary.gradedCount} / ${summary.studentCount}</strong>
+        </div>
+        <div class="hw-bar"><i style="width: ${percent}%"></i></div>
+        <p>共 ${summary.questionCount} 题 · 总分 ${formatNumber(summary.maxScore)}</p>
       </div>
     `;
   }
@@ -812,12 +781,12 @@
     }
 
     if (!overview.exam.classId) {
-      elements.studentCardGrid.innerHTML = '<p class="empty-text">当前作业没有绑定班级，请先在作业设置中选择班级。</p>';
+      elements.studentCardGrid.innerHTML = '<p class="empty-text">当前作业没有绑定班级，请先到班级管理创建班级。</p>';
       return;
     }
 
     if (!overview.students.length) {
-      elements.studentCardGrid.innerHTML = '<p class="empty-text">该班级暂无学生，请先导入名单。</p>';
+      elements.studentCardGrid.innerHTML = '<p class="empty-text">该班级暂无学生，请到班级管理导入名单。</p>';
       return;
     }
 
@@ -865,9 +834,29 @@
     )} / ${formatNumber(student.maxScore)} 分`;
   }
 
+  function showStudentDrawer() {
+    window.clearTimeout(state.drawerTimer);
+    elements.studentDrawer.hidden = false;
+    requestAnimationFrame(() => {
+      elements.studentDrawer.classList.add("is-open");
+      document.body.classList.add("hw-drawer-open");
+    });
+  }
+
+  function hideStudentDrawer() {
+    elements.studentDrawer.classList.remove("is-open");
+    document.body.classList.remove("hw-drawer-open");
+    window.clearTimeout(state.drawerTimer);
+    state.drawerTimer = window.setTimeout(() => {
+      if (!state.activeStudentId) {
+        elements.studentDrawer.hidden = true;
+      }
+    }, 200);
+  }
+
   function closeStudentPanel() {
     state.activeStudentId = "";
-    elements.studentWorkPanel.hidden = true;
+    hideStudentDrawer();
     resetPreview();
     setWorkStatus("等待上传作业图片");
     elements.studentResultArea.innerHTML =
@@ -883,8 +872,7 @@
     }
 
     state.activeStudentId = studentId;
-    elements.studentWorkPanel.hidden = false;
-    elements.studentWorkPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    showStudentDrawer();
     updateStudentHeader(student);
     resetPreview();
     $$(".student-card").forEach((card) => {
@@ -1169,7 +1157,8 @@
       }
 
       await loadSubmission();
-      await loadWorkOverview();
+      await loadAssignment();
+      await loadExamProgress();
       state.pendingImage = "";
       elements.workPreview.hidden = true;
       elements.workPreview.removeAttribute("src");
@@ -1190,9 +1179,16 @@
     }
   }
 
-  async function loadBatchAnalysis() {
+  function emptyAnalysis(message) {
+    const html = `<p class="empty-text">${escapeHtml(message)}</p>`;
+    elements.assignmentOverview.innerHTML = html;
+    elements.assignmentQuestions.innerHTML = html;
+    elements.assignmentKnowledge.innerHTML = html;
+  }
+
+  async function loadBatchAnalysis(force = false) {
     if (!state.activeExamId) {
-      elements.assignmentAnalysis.innerHTML = '<p class="empty-text">请先在作业设置中新建作业。</p>';
+      emptyAnalysis("请先选择作业。");
       return;
     }
 
@@ -1202,64 +1198,56 @@
           `assignment-overview&examId=${encodeURIComponent(state.activeExamId)}`,
           { cache: "no-store" }
         );
+        renderAssignmentHeader();
         renderWorkSummary();
         renderStudentCards();
       }
 
       if (!state.overview.batch) {
-        elements.assignmentAnalysis.innerHTML =
-          '<p class="empty-text">当前作业还没有学生提交，完成批改后即可查看学情分析。</p>';
+        emptyAnalysis("当前作业还没有学生提交，完成批改后即可查看学情分析。");
         return;
       }
 
-      const data = await apiRequest(
-        `batch-analysis&batchId=${encodeURIComponent(state.overview.batch.id)}`,
-        { cache: "no-store" }
-      );
+      const batchId = state.overview.batch.id;
+
+      if (!force && state.lastBatchAnalysis?.batch?.id === batchId) {
+        renderAnalysisPanels(state.lastBatchAnalysis);
+        return;
+      }
+
+      const data = await apiRequest(`batch-analysis&batchId=${encodeURIComponent(batchId)}`, {
+        cache: "no-store",
+      });
       state.lastBatchAnalysis = data;
-      renderBatchAnalysis(data);
+      renderAnalysisPanels(data);
     } catch (error) {
-      elements.assignmentAnalysis.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
+      emptyAnalysis(error.message);
     }
   }
 
-  function renderBatchAnalysis(data) {
+  function renderAnalysisPanels(data) {
     if (!data.overview.gradedResultCount) {
-      elements.assignmentAnalysis.innerHTML =
-        '<p class="empty-text">本次作业还没有批改结果，请先完成学生批改。</p>';
+      emptyAnalysis("本次作业还没有批改结果，请先完成学生批改。");
       return;
     }
 
-    const metrics = `
-      <div class="hw-metrics">
-        <div class="hw-metric"><span>参与学生</span><strong>${data.overview.studentCount}</strong></div>
-        <div class="hw-metric"><span>完成批改</span><strong>${data.overview.gradedStudentCount}</strong></div>
-        <div class="hw-metric"><span>整体得分率</span><strong>${formatPercent(data.overview.rate)}</strong></div>
-        <div class="hw-metric"><span>及格率</span><strong>${formatPercent(data.overview.passRate)}</strong></div>
-        <div class="hw-metric"><span>未全对作答</span><strong>${data.overview.wrongResultCount}</strong></div>
-      </div>
-    `;
-
     const distribution = `
-      <div class="hw-subsection">
-        <div class="hw-section-title">成绩分布</div>
-        <div class="distribution-list">
-          ${data.distribution
-            .map(
-              (item) => `
-                <div class="distribution-item">
-                  <span>${escapeHtml(item.label)}</span>
-                  <div class="hw-bar"><i style="width: ${
-                    data.overview.gradedStudentCount
-                      ? Math.round((item.count / data.overview.gradedStudentCount) * 100)
-                      : 0
-                  }%"></i></div>
-                  <strong>${item.count}</strong>
-                </div>
-              `
-            )
-            .join("")}
-        </div>
+      <div class="distribution-list">
+        ${data.distribution
+          .map(
+            (item) => `
+              <div class="distribution-item">
+                <span>${escapeHtml(item.label)}</span>
+                <div class="hw-bar"><i style="width: ${
+                  data.overview.gradedStudentCount
+                    ? Math.round((item.count / data.overview.gradedStudentCount) * 100)
+                    : 0
+                }%"></i></div>
+                <strong>${item.count}</strong>
+              </div>
+            `
+          )
+          .join("")}
       </div>
     `;
 
@@ -1332,9 +1320,19 @@
         </div>
       `;
 
-    elements.assignmentAnalysis.innerHTML = `
-      ${metrics}
-      ${distribution}
+    elements.assignmentOverview.innerHTML = `
+      <div class="hw-subsection">${aiBlock}</div>
+      <div class="hw-subsection">
+        <div class="hw-section-title">成绩分布</div>
+        <div class="hw-quickstats">
+          <div><span>及格率</span><strong>${formatPercent(data.overview.passRate)}</strong></div>
+          <div><span>未全对作答</span><strong>${data.overview.wrongResultCount}</strong></div>
+        </div>
+        ${distribution}
+      </div>
+    `;
+
+    elements.assignmentQuestions.innerHTML = `
       <div class="hw-subsection">
         <div class="hw-section-title">逐题错误统计</div>
         <div class="result-table-wrap hw-table-wrap">
@@ -1354,11 +1352,13 @@
           </table>
         </div>
       </div>
+    `;
+
+    elements.assignmentKnowledge.innerHTML = `
       <div class="hw-subsection">
         <div class="hw-section-title">知识点掌握情况</div>
         <div class="kp-grid">${knowledgeCards}</div>
       </div>
-      <div class="hw-subsection">${aiBlock}</div>
     `;
   }
 
@@ -1455,7 +1455,7 @@
       return;
     }
 
-    const button = elements.assignmentAnalysis.querySelector('[data-action="analyze-batch"]');
+    const button = elements.assignmentOverview.querySelector('[data-action="analyze-batch"]');
 
     if (button) {
       button.disabled = true;
@@ -1467,7 +1467,7 @@
         method: "POST",
         body: JSON.stringify({ batchId }),
       });
-      await loadBatchAnalysis();
+      await loadBatchAnalysis(true);
     } catch (error) {
       alert(error.message);
       if (button) {
@@ -1759,206 +1759,202 @@
     `;
   }
 
-  function renderQuickPreview(target) {
-    const image = target === "question" ? state.quickQuestion : state.quickAnswer;
-    const container = target === "question" ? elements.quickQuestionPreview : elements.quickAnswerPreview;
-
-    if (!image) {
-      container.innerHTML = `<p class="empty-text">${target === "question" ? "尚未选择题图" : "尚未选择作答图"}</p>`;
+  function openExamDrawer(mode) {
+    if (mode === "manage" && !state.activeExamId) {
+      alert("请先选择一份作业。");
       return;
     }
 
-    container.innerHTML = `
-      <img src="${image.src}" alt="${escapeHtml(image.name)}" />
-      <div>
-        <strong>${escapeHtml(image.name)}</strong>
-        <span>本次上传</span>
-      </div>
-    `;
-  }
+    state.drawerMode = mode;
+    state.wizardStep = mode === "create" ? 1 : 2;
+    elements.examDrawer.hidden = false;
+    document.body.classList.add("hw-drawer-open");
+    requestAnimationFrame(() => elements.examDrawer.classList.add("is-open"));
 
-  function updateQuickState() {
-    if (state.quickBusy) {
-      return;
-    }
+    if (mode === "create") {
+      elements.examDrawerTitle.textContent = "新建作业";
+      elements.examForm.reset();
+      const classSelect = elements.examForm.querySelector('[data-select="classes"]');
 
-    const maxScore = Number(elements.quickMaxScore.value);
-    const ready = Boolean(state.quickQuestion && state.quickAnswer && Number.isFinite(maxScore) && maxScore > 0);
-    elements.quickGradeButton.disabled = !ready;
+      if (classSelect) {
+        classSelect.value = state.defaultClassId;
+      }
 
-    if (!state.quickQuestion) {
-      elements.quickStatusText.textContent = "请上传试题图片";
-    } else if (!state.quickAnswer) {
-      elements.quickStatusText.textContent = "请上传学生作答图片";
-    } else if (!Number.isFinite(maxScore) || maxScore <= 0) {
-      elements.quickStatusText.textContent = "请填写大于 0 的满分";
+      elements.questionList.innerHTML = '<p class="empty-text">先完成第 1 步并保存作业。</p>';
     } else {
-      elements.quickStatusText.textContent = "可以开始 AI 批改";
+      elements.examDrawerTitle.textContent = "题目与模板";
+    }
+
+    renderWizardStep();
+  }
+
+  function closeExamDrawer() {
+    elements.examDrawer.classList.remove("is-open");
+    window.clearTimeout(state.examDrawerTimer);
+    state.examDrawerTimer = window.setTimeout(() => {
+      elements.examDrawer.hidden = true;
+    }, 200);
+    document.body.classList.remove("hw-drawer-open");
+  }
+
+  function renderWizardStep() {
+    const step = state.wizardStep;
+    const exam = state.exams.find((item) => item.id === state.activeExamId);
+
+    $$(".hw-wizard-step").forEach((panel) => {
+      panel.hidden = Number(panel.dataset.step) !== step;
+    });
+
+    const drawerBody = elements.examDrawer.querySelector(".hw-drawer-body");
+
+    if (drawerBody) {
+      drawerBody.scrollTop = 0;
+    }
+
+    $$("[data-step-chip]").forEach((chip) => {
+      const chipStep = Number(chip.dataset.stepChip);
+      chip.hidden = state.drawerMode === "manage" && chipStep === 1;
+      chip.classList.toggle("is-active", chipStep === step);
+      chip.classList.toggle("is-done", chipStep < step);
+    });
+
+    if (state.drawerMode === "create") {
+      elements.examDrawerHint.textContent =
+        step === 1
+          ? "先填写作业信息，下一步录入题目。"
+          : step === 2
+            ? `${exam?.name || "新作业"} · 添加本次作业的题目。`
+            : `${exam?.name || "新作业"} · 上传标准作业并框选题目区域。`;
+    } else {
+      elements.examDrawerHint.textContent =
+        step === 2
+          ? `${exam?.name || "当前作业"} · 补充或检查题目。`
+          : `${exam?.name || "当前作业"} · 上传标准作业并框选题目区域。`;
+    }
+
+    elements.wizardBackButton.hidden = state.drawerMode === "manage";
+  }
+
+  function finishWizard() {
+    const isCreate = state.drawerMode === "create";
+    closeExamDrawer();
+    loadExamProgress().catch(() => {});
+    loadExamScope(state.activeExamId).catch(() => {});
+
+    if (isCreate) {
+      state.analysisTab = "students";
+      applyAnalysisTabUI("students");
+      switchView("assignment");
+    } else if (state.view === "assignment") {
+      state.overview = null;
+      state.lastBatchAnalysis = null;
+      loadAssignment().catch((error) => alert(error.message));
     }
   }
 
-  async function handleQuickImage(event, target) {
-    const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
+  async function handleExamSubmit(event) {
+    event.preventDefault();
+    const button = elements.examForm.querySelector("button[type='submit']");
+    button.disabled = true;
 
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const compressed = await compressImageDataUrl(dataUrl);
-      const image = { name: file.name, src: compressed };
-
-      if (target === "question") {
-        state.quickQuestion = image;
-        elements.quickQuestionFileName.textContent = file.name;
-      } else {
-        state.quickAnswer = image;
-        elements.quickAnswerFileName.textContent = file.name;
-      }
-
-      renderQuickPreview(target);
-      updateQuickState();
-    } catch (error) {
-      alert(error.message || "图片读取失败。");
-    } finally {
-      event.target.value = "";
-    }
-  }
-
-  function renderQuickResult(result, rawContent) {
-    const deductions = Array.isArray(result?.deductions) ? result.deductions : [];
-    const suggestions = Array.isArray(result?.suggestions) ? result.suggestions : [];
-
-    if (!result) {
-      elements.quickResultArea.innerHTML = `
-        <article class="ai-result-card is-error">
-          <h3>AI 返回内容未能解析</h3>
-          <pre>${escapeHtml(rawContent || "AI 没有返回评分内容，请确认服务端配置的是支持图片输入的视觉模型。")}</pre>
-        </article>
-      `;
-      return;
-    }
-
-    const maxScore = result.max_score ?? elements.quickMaxScore.value;
-    const hasComment = Boolean(result.analysis || deductions.length || suggestions.length);
-
-    elements.quickResultArea.innerHTML = `
-      <article class="ai-score-card">
-        <span>AI 评分</span>
-        <strong>${escapeHtml(result.score ?? "-")} / ${escapeHtml(maxScore)}</strong>
-        <small>${escapeHtml(result.level || "AI 评分建议")}</small>
-      </article>
-      ${result.analysis ? `<article class="ai-result-card"><h3>评语</h3><p>${escapeHtml(result.analysis)}</p></article>` : ""}
-      ${deductions.length ? `<article class="ai-result-card"><h3>扣分点</h3><ul>${deductions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article>` : ""}
-      ${suggestions.length ? `<article class="ai-result-card"><h3>改进建议</h3><ul>${suggestions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article>` : ""}
-      ${
-        hasComment
-          ? ""
-          : `<article class="ai-result-card"><h3>AI 原始返回</h3><pre>${escapeHtml(rawContent || "暂无点评内容。")}</pre></article>`
-      }
-    `;
-  }
-
-  async function handleQuickGrade() {
-    if (state.quickBusy) {
-      return;
-    }
-
-    if (!state.quickQuestion || !state.quickAnswer) {
-      alert("请先上传试题和学生作答图片。");
-      return;
-    }
-
-    const maxScore = Number(elements.quickMaxScore.value);
-
-    if (!Number.isFinite(maxScore) || maxScore <= 0) {
-      alert("请填写大于 0 的满分。");
-      return;
-    }
-
-    state.quickBusy = true;
-    elements.quickGradeButton.disabled = true;
-    elements.quickGradeButton.textContent = "AI 批改中...";
-    elements.quickStatusText.textContent = "正在调用 DeepSeek 分析试题与作答";
-    elements.quickResultArea.innerHTML = '<p class="empty-text">正在分析作答，请稍候...</p>';
-
-    try {
-      const response = await fetch("/api/ai-grade", {
+      const payload = await apiRequest("create-exam", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          questionImage: state.quickQuestion.src,
-          questionName: state.quickQuestion.name,
-          questionKind: "single_question",
-          answerImage: state.quickAnswer.src,
-          answerName: state.quickAnswer.name,
-          maxScore,
-          rubric: elements.quickRubric.value.trim(),
-        }),
+        body: JSON.stringify(formPayload(elements.examForm)),
       });
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(payload.message || `AI 批改请求失败：HTTP ${response.status}`);
-      }
-
-      renderQuickResult(payload.result, payload.rawContent);
-      elements.quickStatusText.textContent = payload.historyError
-        ? `批改完成，历史保存失败（${payload.model || "AI"}）`
-        : `批改完成，已保存历史（${payload.model || "AI"}）`;
+      state.activeExamId = payload.exam.id;
+      state.overview = null;
+      state.lastBatchAnalysis = null;
+      await loadBootstrap();
+      await loadExamProgress();
+      state.wizardStep = 2;
+      elements.examDrawerTitle.textContent = "录入题目";
+      renderWizardStep();
     } catch (error) {
-      elements.quickResultArea.innerHTML = `
-        <article class="ai-result-card is-error">
-          <h3>无法完成 AI 批改</h3>
-          <p>${escapeHtml(error.message || "请检查网络连接或稍后重试。")}</p>
-        </article>
-      `;
-      elements.quickStatusText.textContent = "批改失败";
+      alert(error.message);
     } finally {
-      state.quickBusy = false;
-      elements.quickGradeButton.textContent = "开始 AI 批改";
-      const latestMaxScore = Number(elements.quickMaxScore.value);
-      elements.quickGradeButton.disabled = !(
-        state.quickQuestion &&
-        state.quickAnswer &&
-        Number.isFinite(latestMaxScore) &&
-        latestMaxScore > 0
-      );
+      button.disabled = false;
+    }
+  }
+
+  async function handleQuestionSubmit(event) {
+    event.preventDefault();
+
+    if (!state.activeExamId) {
+      alert("请先完成第 1 步，保存作业信息。");
+      return;
+    }
+
+    const button = elements.questionForm.querySelector("button[type='submit']");
+    button.disabled = true;
+
+    try {
+      await apiRequest("create-question", {
+        method: "POST",
+        body: JSON.stringify({ ...formPayload(elements.questionForm), examId: state.activeExamId }),
+      });
+      elements.questionForm.reset();
+      await loadBootstrap();
+      await loadExamProgress();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
     }
   }
 
   function bindEvents() {
-    bindForm(elements.classForm, "create-class", null, async (payload) => {
-      window.AppAuth?.setDefaultClassId?.(payload.classItem.id);
-      await loadBootstrap();
+    elements.listRefreshButton.addEventListener("click", () => {
+      Promise.all([loadBootstrap(), loadExamProgress()]).catch((error) => alert(error.message));
     });
-    bindForm(elements.examForm, "create-exam", null, async (payload) => {
-      state.activeExamId = payload.exam.id;
-      await loadBootstrap();
-    });
-    bindForm(
-      elements.questionForm,
-      "create-question",
-      () => ({ examId: state.activeExamId }),
-      async () => {
-        await loadBootstrap();
-        await loadExamScope(state.activeExamId);
+
+    elements.newExamButton.addEventListener("click", () => openExamDrawer("create"));
+    elements.editExamButton.addEventListener("click", () => {
+      if (!state.activeExamId) {
+        openExamDrawer("manage");
+        return;
       }
-    );
 
-    elements.importForm.addEventListener("submit", handleImportStudents);
-    elements.importFile.addEventListener("change", (event) => {
-      const file = event.target.files?.[0];
-      elements.importFileName.textContent = file ? file.name : "支持 .xlsx、.xls、.csv";
+      loadExamScope(state.activeExamId)
+        .then(() => openExamDrawer("manage"))
+        .catch((error) => alert(error.message));
     });
 
-    elements.refreshButton.addEventListener("click", () => {
-      loadBootstrap().catch((error) => alert(error.message));
+    $$("[data-close-exam-drawer]").forEach((node) => {
+      node.addEventListener("click", closeExamDrawer);
     });
+
+    elements.examForm.addEventListener("submit", handleExamSubmit);
+    elements.questionForm.addEventListener("submit", handleQuestionSubmit);
+
+    elements.wizardBackButton.addEventListener("click", () => {
+      state.wizardStep = 1;
+      renderWizardStep();
+    });
+
+    elements.wizardNextButton.addEventListener("click", () => {
+      if (!state.questions.length) {
+        alert("请先添加至少一道题目。");
+        return;
+      }
+
+      state.wizardStep = 3;
+      renderWizardStep();
+    });
+
+    elements.wizardSkipTemplateButton.addEventListener("click", finishWizard);
+    elements.wizardBackToQuestionsButton.addEventListener("click", () => {
+      state.wizardStep = 2;
+      renderWizardStep();
+    });
+    elements.wizardFinishButton.addEventListener("click", finishWizard);
 
     $$(".hw-tab").forEach((tab) => {
       tab.addEventListener("click", () => switchView(tab.dataset.view));
+    });
+
+    $$(".hw-subtab").forEach((tab) => {
+      tab.addEventListener("click", () => switchAnalysisTab(tab.dataset.analysisTab));
     });
 
     $$('[data-select="exams"]').forEach((select) => {
@@ -1973,16 +1969,35 @@
       elements.saveRegionButton.disabled = !state.templateSelection || !elements.regionQuestionSelect.value;
     });
 
-    elements.examList.addEventListener("click", (event) => {
-      const item = event.target.closest("[data-exam-id]");
+    elements.examCards.addEventListener("click", (event) => {
+      const actionNode = event.target.closest("[data-exam-action]");
 
-      if (item) {
-        handleExamChange(item.dataset.examId).catch((error) => alert(error.message));
+      if (!actionNode) {
+        return;
       }
+
+      const action = actionNode.dataset.examAction;
+      const examId = actionNode.dataset.examId;
+
+      if (action === "create") {
+        openExamDrawer("create");
+        return;
+      }
+
+      state.activeExamId = examId;
+      syncExamSelects();
+      state.overview = null;
+      state.lastBatchAnalysis = null;
+      state.analysisTab = action === "analysis" ? "overview" : "students";
+      applyAnalysisTabUI(state.analysisTab);
+      switchView("assignment");
     });
 
     elements.workRefreshButton.addEventListener("click", () => {
-      loadWorkOverview().catch((error) => alert(error.message));
+      state.lastBatchAnalysis = null;
+      loadAssignment()
+        .then(() => (state.analysisTab !== "students" ? loadBatchAnalysis(true) : null))
+        .catch((error) => alert(error.message));
     });
 
     elements.studentCardGrid.addEventListener("click", (event) => {
@@ -1993,27 +2008,21 @@
       }
     });
 
-    elements.workSummary.addEventListener("click", (event) => {
-      if (event.target.closest('[data-action="open-analysis"]')) {
-        switchView("analysis");
-      }
+    elements.closeWorkPanel.addEventListener("click", closeStudentPanel);
+    $$("[data-close-student-drawer]").forEach((node) => {
+      node.addEventListener("click", closeStudentPanel);
     });
 
-    elements.closeWorkPanel.addEventListener("click", closeStudentPanel);
     elements.workImageInput.addEventListener("change", handleWorkImage);
     elements.cameraButton.addEventListener("click", openCamera);
     elements.closeCameraButton.addEventListener("click", closeCamera);
     elements.captureButton.addEventListener("click", capturePhoto);
     elements.gradeStudentButton.addEventListener("click", gradeSelectedStudent);
 
-    elements.assignmentAnalysis.addEventListener("click", (event) => {
+    elements.assignmentOverview.addEventListener("click", (event) => {
       if (event.target.closest('[data-action="analyze-batch"]')) {
         analyzeBatch();
       }
-    });
-
-    elements.loadAnalysisButton.addEventListener("click", () => {
-      loadBatchAnalysis().catch((error) => alert(error.message));
     });
 
     $$('input[name="historyMode"]').forEach((radio) => {
@@ -2022,10 +2031,20 @@
     elements.historyClassSelect.addEventListener("change", renderHistoryStudentSelect);
     elements.loadHistoryButton.addEventListener("click", loadHistory);
 
-    elements.quickQuestionUpload.addEventListener("change", (event) => handleQuickImage(event, "question"));
-    elements.quickAnswerUpload.addEventListener("change", (event) => handleQuickImage(event, "answer"));
-    elements.quickMaxScore.addEventListener("input", updateQuickState);
-    elements.quickGradeButton.addEventListener("click", handleQuickGrade);
+    window.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      if (!elements.studentDrawer.hidden) {
+        closeStudentPanel();
+        return;
+      }
+
+      if (!elements.examDrawer.hidden) {
+        closeExamDrawer();
+      }
+    });
 
     window.addEventListener("default-class-changed", (event) => {
       const classId = event.detail?.classId || "";
@@ -2036,8 +2055,7 @@
 
       state.defaultClassId = classId;
       renderCoreSelects();
-      renderClassList();
-      renderStudentRoster();
+      renderClassContext();
       const classExam = state.exams.find((exam) => exam.classId === classId);
       handleExamChange(classExam?.id || "").catch((error) => alert(error.message));
     });
@@ -2046,22 +2064,41 @@
   setupTemplateSelection();
   bindEvents();
   updateHistoryMode();
-  updateQuickState();
 
-  const initialView = new URLSearchParams(window.location.search).get("view");
-  const hasInitialView = ["setup", "work", "analysis", "quick"].includes(initialView);
+  const initialParams = new URLSearchParams(window.location.search);
+  const viewParam = initialParams.get("view") || "";
+  const initialExamId = initialParams.get("examId") || "";
+  const viewMap = {
+    list: "list",
+    setup: "list",
+    assignment: "assignment",
+    work: "assignment",
+    analysis: "assignment",
+    history: "history",
+  };
+  const initialView = viewMap[viewParam] || "list";
 
-  if (initialView === "quick") {
-    switchView("quick");
+  if (viewParam === "quick") {
+    window.location.replace("./ai-grading.html");
+    return;
+  }
+
+  if (viewParam === "analysis") {
+    state.analysisTab = "overview";
+    applyAnalysisTabUI("overview");
   }
 
   loadBootstrap()
-    .then(() => {
-      if (hasInitialView && initialView !== "quick") {
-        switchView(initialView);
+    .then(async () => {
+      if (initialExamId && state.exams.some((exam) => exam.id === initialExamId)) {
+        state.activeExamId = initialExamId;
+        syncExamSelects();
+        await loadExamScope(initialExamId);
       }
+
+      switchView(initialView);
     })
     .catch((error) => {
-      elements.assignmentAnalysis.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
+      elements.examCards.innerHTML = `<p class="empty-text">${escapeHtml(error.message)}</p>`;
     });
 })();
