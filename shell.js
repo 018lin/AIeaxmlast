@@ -238,7 +238,7 @@
 
   async function loadClasses() {
     try {
-      const response = await fetch("/api/mvp?action=bootstrap", { cache: "no-store" });
+      const response = await auth.request("/api/mvp?action=bootstrap", { cache: "no-store" });
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {

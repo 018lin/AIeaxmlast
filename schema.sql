@@ -246,3 +246,21 @@ CREATE TABLE IF NOT EXISTS assignment_analyses (
 
 CREATE INDEX IF NOT EXISTS assignment_analyses_batch_idx
   ON assignment_analyses (batch_id, created_at DESC);
+
+-- 教师数据归属：历史数据默认归属初始账号 018
+ALTER TABLE classes ADD COLUMN IF NOT EXISTS teacher_account text NOT NULL DEFAULT '018';
+ALTER TABLE students ADD COLUMN IF NOT EXISTS teacher_account text NOT NULL DEFAULT '018';
+ALTER TABLE exams ADD COLUMN IF NOT EXISTS teacher_account text NOT NULL DEFAULT '018';
+ALTER TABLE ai_grading_history ADD COLUMN IF NOT EXISTS teacher_account text NOT NULL DEFAULT '018';
+
+CREATE INDEX IF NOT EXISTS classes_teacher_created_idx
+  ON classes (teacher_account, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS students_teacher_class_idx
+  ON students (teacher_account, class_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS exams_teacher_created_idx
+  ON exams (teacher_account, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ai_grading_history_teacher_idx
+  ON ai_grading_history (teacher_account, created_at DESC);

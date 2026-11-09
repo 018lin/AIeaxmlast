@@ -269,7 +269,7 @@ async function listPairs() {
   }));
 }
 
-async function createAiGradingHistory(payload) {
+async function createAiGradingHistory(payload, account) {
   const client = await getPool().connect();
   const result = payload.result && typeof payload.result === "object" ? payload.result : {};
 
@@ -312,7 +312,8 @@ async function createAiGradingHistory(payload) {
           deductions,
           suggestions,
           raw_content,
-          ai_result
+          ai_result,
+          teacher_account
         )
         VALUES (
           $1,
@@ -329,7 +330,8 @@ async function createAiGradingHistory(payload) {
           $12::jsonb,
           $13::jsonb,
           $14,
-          $15::jsonb
+          $15::jsonb,
+          $16
         )
         RETURNING id
       `,
@@ -349,6 +351,7 @@ async function createAiGradingHistory(payload) {
         JSON.stringify(asJsonArray(result.suggestions)),
         payload.rawContent || "",
         Object.keys(result).length ? JSON.stringify(result) : null,
+        account || "",
       ]
     );
 
@@ -362,7 +365,7 @@ async function createAiGradingHistory(payload) {
   }
 }
 
-async function listAiGradingHistory() {
+async function listAiGradingHistory(account) {
   const result = await getPool().query(`
     SELECT
       h.id,
@@ -386,9 +389,10 @@ async function listAiGradingHistory() {
     FROM ai_grading_history h
     LEFT JOIN uploaded_images qi ON qi.id = h.question_image_id
     LEFT JOIN uploaded_images ai ON ai.id = h.answer_image_id
+    WHERE h.teacher_account = $1
     ORDER BY h.created_at DESC
     LIMIT 100
-  `);
+  `, [account || ""]);
 
   return result.rows.map((row) => ({
     id: row.id,
@@ -410,8 +414,8 @@ async function listAiGradingHistory() {
   }));
 }
 
-async function deleteAiGradingHistory() {
-  await getPool().query("DELETE FROM ai_grading_history");
+async function deleteAiGradingHistory(account) {
+  await getPool().query("DELETE FROM ai_grading_history WHERE teacher_account = $1", [account || ""]);
 }
 
 function mapClass(row) {
@@ -520,7 +524,7 @@ function getSafeRatio(value, fallback = 0) {
   return Math.min(1, Math.max(0, numeric));
 }
 
-async function createClass(payload) {
+async function createClass(payload, account) {
   const name = String(payload.name || "").trim();
 
   if (!name) {
@@ -529,54 +533,75 @@ async function createClass(payload) {
 
   const result = await getPool().query(
     `
-      INSERT INTO classes (id, name, grade)
-      VALUES ($1, $2, $3)
+      INSERT INTO classes (id, name, grade, teacher_account)
+      VALUES ($1, $2, $3, $4)
       RETURNING id, name, grade, created_at
     `,
-    [randomUUID(), name, String(payload.grade || "").trim()]
+    [randomUUID(), name, String(payload.grade || "").trim(), String(account || "").trim()]
   );
 
   return mapClass(result.rows[0]);
 }
 
-async function listClasses() {
-  const result = await getPool().query(`
-    SELECT id, name, grade, created_at
-    FROM classes
-    ORDER BY created_at DESC
-    LIMIT 200
-  `);
+async function listClasses(account) {
+  const result = await getPool().query(
+    `
+      SELECT id, name, grade, created_at
+      FROM classes
+      WHERE teacher_account = $1
+      ORDER BY created_at DESC
+      LIMIT 200
+    `,
+    [String(account || "").trim()]
+  );
 
   return result.rows.map(mapClass);
 }
 
-async function createStudent(payload) {
+async function createStudent(payload, account) {
   const name = String(payload.name || "").trim();
 
   if (!name) {
     throw new Error("学生姓名不能为空。");
   }
 
+  if (payload.classId) {
+    await assertClassOwnership(payload.classId, account);
+  }
+
   const result = await getPool().query(
     `
-      INSERT INTO students (id, class_id, name, student_no)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO students (id, class_id, name, student_no, teacher_account)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING id, class_id, name, student_no, created_at
     `,
-    [randomUUID(), payload.classId || null, name, String(payload.studentNo || "").trim()]
+    [
+      randomUUID(),
+      payload.classId || null,
+      name,
+      String(payload.studentNo || "").trim(),
+      String(account || "").trim(),
+    ]
   );
 
   return mapStudent(result.rows[0]);
 }
 
-async function listStudents(classId) {
+async function listStudents(classId, account) {
   const values = [];
-  let whereClause = "";
+  const conditions = [];
+
+  if (account) {
+    values.push(String(account).trim());
+    conditions.push(`s.teacher_account = $${values.length}`);
+  }
 
   if (classId) {
     values.push(classId);
-    whereClause = "WHERE s.class_id = $1";
+    conditions.push(`s.class_id = $${values.length}`);
   }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await getPool().query(
     `
@@ -593,18 +618,22 @@ async function listStudents(classId) {
   return result.rows.map(mapStudent);
 }
 
-async function createExam(payload) {
+async function createExam(payload, account) {
   const name = String(payload.name || "").trim();
 
   if (!name) {
     throw new Error("考试名称不能为空。");
   }
 
+  if (payload.classId) {
+    await assertClassOwnership(payload.classId, account);
+  }
+
   const knowledgePoints = normalizeKnowledgePoints(payload.knowledgePoints);
   const result = await getPool().query(
     `
-      INSERT INTO exams (id, class_id, name, subject, exam_date, total_score, knowledge_points)
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      INSERT INTO exams (id, class_id, name, subject, exam_date, total_score, knowledge_points, teacher_account)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
       RETURNING id, class_id, name, subject, exam_date, total_score, knowledge_points, created_at
     `,
     [
@@ -615,74 +644,83 @@ async function createExam(payload) {
       payload.examDate || null,
       getNumericValue(payload.totalScore) || 0,
       JSON.stringify(knowledgePoints),
+      String(account || "").trim(),
     ]
   );
 
   return mapExam(result.rows[0]);
 }
 
-async function listExams() {
-  const result = await getPool().query(`
-    SELECT
-      e.id,
-      e.class_id,
-      c.name AS class_name,
-      e.name,
-      e.subject,
-      e.exam_date,
-      e.total_score,
-      e.knowledge_points,
-      e.created_at,
-      COUNT(q.id) AS question_count
-    FROM exams e
-    LEFT JOIN classes c ON c.id = e.class_id
-    LEFT JOIN exam_questions q ON q.exam_id = e.id
-    GROUP BY e.id, c.name
-    ORDER BY e.created_at DESC
-    LIMIT 200
-  `);
+async function listExams(account) {
+  const result = await getPool().query(
+    `
+      SELECT
+        e.id,
+        e.class_id,
+        c.name AS class_name,
+        e.name,
+        e.subject,
+        e.exam_date,
+        e.total_score,
+        e.knowledge_points,
+        e.created_at,
+        COUNT(q.id) AS question_count
+      FROM exams e
+      LEFT JOIN classes c ON c.id = e.class_id
+      LEFT JOIN exam_questions q ON q.exam_id = e.id
+      WHERE e.teacher_account = $1
+      GROUP BY e.id, c.name
+      ORDER BY e.created_at DESC
+      LIMIT 200
+    `,
+    [String(account || "").trim()]
+  );
 
   return result.rows.map(mapExam);
 }
 
-async function listExamProgress() {
-  const result = await getPool().query(`
-    SELECT
-      e.id AS exam_id,
-      COALESCE(class_stats.student_count, 0) AS student_count,
-      COALESCE(page_stats.submitted_count, 0) AS submitted_count,
-      COALESCE(result_stats.graded_student_count, 0) AS graded_student_count
-    FROM exams e
-    LEFT JOIN (
-      SELECT class_id, COUNT(*)::int AS student_count
-      FROM students
-      GROUP BY class_id
-    ) class_stats ON class_stats.class_id = e.class_id
-    LEFT JOIN LATERAL (
-      SELECT b.id
-      FROM scan_batches b
-      WHERE b.exam_id = e.id
-      ORDER BY b.created_at DESC
-      LIMIT 1
-    ) latest_batch ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT COUNT(DISTINCT p.student_id)::int AS submitted_count
-      FROM scanned_pages p
-      WHERE p.batch_id = latest_batch.id
-    ) page_stats ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT COUNT(*)::int AS graded_student_count
-      FROM (
-        SELECT r.student_id
-        FROM grading_results r
-        WHERE r.batch_id = latest_batch.id
-        GROUP BY r.student_id
-        HAVING COUNT(*) >= GREATEST((
-          SELECT COUNT(*) FROM exam_questions q WHERE q.exam_id = e.id
-        ), 1)
-      ) fully_graded
-    ) result_stats ON TRUE
-  `);
+async function listExamProgress(account) {
+  const result = await getPool().query(
+    `
+      SELECT
+        e.id AS exam_id,
+        COALESCE(class_stats.student_count, 0) AS student_count,
+        COALESCE(page_stats.submitted_count, 0) AS submitted_count,
+        COALESCE(result_stats.graded_student_count, 0) AS graded_student_count
+      FROM exams e
+      LEFT JOIN (
+        SELECT class_id, COUNT(*)::int AS student_count
+        FROM students
+        GROUP BY class_id
+      ) class_stats ON class_stats.class_id = e.class_id
+      LEFT JOIN LATERAL (
+        SELECT b.id
+        FROM scan_batches b
+        WHERE b.exam_id = e.id
+        ORDER BY b.created_at DESC
+        LIMIT 1
+      ) latest_batch ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT p.student_id)::int AS submitted_count
+        FROM scanned_pages p
+        WHERE p.batch_id = latest_batch.id
+      ) page_stats ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS graded_student_count
+        FROM (
+          SELECT r.student_id
+          FROM grading_results r
+          WHERE r.batch_id = latest_batch.id
+          GROUP BY r.student_id
+          HAVING COUNT(*) >= GREATEST((
+            SELECT COUNT(*) FROM exam_questions q WHERE q.exam_id = e.id
+          ), 1)
+        ) fully_graded
+      ) result_stats ON TRUE
+      WHERE e.teacher_account = $1
+    `,
+    [String(account || "").trim()]
+  );
 
   return result.rows.map((row) => ({
     examId: row.exam_id,
@@ -930,14 +968,21 @@ async function createScanBatch(payload) {
   return mapBatch(result.rows[0]);
 }
 
-async function listScanBatches(examId) {
+async function listScanBatches(examId, account) {
   const values = [];
-  let whereClause = "";
+  const conditions = [];
+
+  if (account) {
+    values.push(String(account).trim());
+    conditions.push(`e.teacher_account = $${values.length}`);
+  }
 
   if (examId) {
     values.push(examId);
-    whereClause = "WHERE b.exam_id = $1";
+    conditions.push(`b.exam_id = $${values.length}`);
   }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const result = await getPool().query(
     `
@@ -1164,20 +1209,147 @@ function parseStudentRowsFromWorkbook(buffer, mimeType) {
   return students;
 }
 
-async function getClassRecord(classId) {
+function forbiddenError(message) {
+  const error = new Error(message);
+  error.statusCode = 403;
+  return error;
+}
+
+async function assertClassOwnership(classId, account) {
+  if (!classId) {
+    return;
+  }
+
   const result = await getPool().query(
-    "SELECT id, name, grade, created_at FROM classes WHERE id = $1",
-    [classId]
+    "SELECT 1 FROM classes WHERE id = $1 AND teacher_account = $2",
+    [classId, String(account || "").trim()]
+  );
+
+  if (!result.rowCount) {
+    throw forbiddenError("班级不存在或无权访问。");
+  }
+}
+
+async function assertStudentOwnership(studentId, account) {
+  if (!studentId) {
+    return;
+  }
+
+  const result = await getPool().query(
+    "SELECT 1 FROM students WHERE id = $1 AND teacher_account = $2",
+    [studentId, String(account || "").trim()]
+  );
+
+  if (!result.rowCount) {
+    throw forbiddenError("学生不存在或无权访问。");
+  }
+}
+
+async function assertExamOwnership(examId, account) {
+  if (!examId) {
+    return;
+  }
+
+  const result = await getPool().query(
+    "SELECT 1 FROM exams WHERE id = $1 AND teacher_account = $2",
+    [examId, String(account || "").trim()]
+  );
+
+  if (!result.rowCount) {
+    throw forbiddenError("作业不存在或无权访问。");
+  }
+}
+
+async function assertBatchOwnership(batchId, account) {
+  if (!batchId) {
+    return;
+  }
+
+  const result = await getPool().query(
+    `
+      SELECT 1
+      FROM scan_batches b
+      JOIN exams e ON e.id = b.exam_id
+      WHERE b.id = $1 AND e.teacher_account = $2
+    `,
+    [batchId, String(account || "").trim()]
+  );
+
+  if (!result.rowCount) {
+    throw forbiddenError("批次不存在或无权访问。");
+  }
+}
+
+async function assertTemplateOwnership(templateId, account) {
+  if (!templateId) {
+    return;
+  }
+
+  const result = await getPool().query(
+    `
+      SELECT 1
+      FROM paper_templates t
+      JOIN exams e ON e.id = t.exam_id
+      WHERE t.id = $1 AND e.teacher_account = $2
+    `,
+    [templateId, String(account || "").trim()]
+  );
+
+  if (!result.rowCount) {
+    throw forbiddenError("模板不存在或无权访问。");
+  }
+}
+
+async function assertQuestionOwnership(questionId, account) {
+  if (!questionId) {
+    return;
+  }
+
+  const result = await getPool().query(
+    `
+      SELECT 1
+      FROM exam_questions q
+      JOIN exams e ON e.id = q.exam_id
+      WHERE q.id = $1 AND e.teacher_account = $2
+    `,
+    [questionId, String(account || "").trim()]
+  );
+
+  if (!result.rowCount) {
+    throw forbiddenError("题目不存在或无权访问。");
+  }
+}
+
+async function getClassRecord(classId, account) {
+  const values = [classId];
+  let whereClause = "id = $1";
+
+  if (account) {
+    values.push(String(account).trim());
+    whereClause += " AND teacher_account = $2";
+  }
+
+  const result = await getPool().query(
+    `SELECT id, name, grade, created_at FROM classes WHERE ${whereClause}`,
+    values
   );
 
   if (result.rowCount === 0) {
-    throw new Error("班级不存在。");
+    throw forbiddenError(account ? "班级不存在或无权访问。" : "班级不存在。");
   }
 
   return mapClass(result.rows[0]);
 }
 
-async function getExamRecord(examId) {
+async function getExamRecord(examId, account) {
+  const values = [examId];
+  let whereClause = "e.id = $1";
+
+  if (account) {
+    values.push(String(account).trim());
+    whereClause += " AND e.teacher_account = $2";
+  }
+
   const result = await getPool().query(
     `
       SELECT
@@ -1194,20 +1366,20 @@ async function getExamRecord(examId) {
       FROM exams e
       LEFT JOIN classes c ON c.id = e.class_id
       LEFT JOIN exam_questions q ON q.exam_id = e.id
-      WHERE e.id = $1
+      WHERE ${whereClause}
       GROUP BY e.id, c.name
     `,
-    [examId]
+    values
   );
 
   if (result.rowCount === 0) {
-    throw new Error("作业不存在。");
+    throw forbiddenError(account ? "作业不存在或无权访问。" : "作业不存在。");
   }
 
   return mapExam(result.rows[0]);
 }
 
-async function importStudents(payload) {
+async function importStudents(payload, account) {
   const file = payload.file || payload.excel || "";
 
   if (!file) {
@@ -1217,7 +1389,7 @@ async function importStudents(payload) {
   let classItem;
 
   if (payload.classId) {
-    classItem = await getClassRecord(payload.classId);
+    classItem = await getClassRecord(payload.classId, account);
   } else {
     const className = String(payload.className || "").trim();
 
@@ -1225,7 +1397,7 @@ async function importStudents(payload) {
       throw new Error("请选择已有班级，或填写新班级名称。");
     }
 
-    classItem = await createClass({ name: className, grade: payload.grade });
+    classItem = await createClass({ name: className, grade: payload.grade }, account);
   }
 
   const { mimeType, buffer } = parseImportDataUrl(file);
@@ -1259,10 +1431,10 @@ async function importStudents(payload) {
 
       await client.query(
         `
-          INSERT INTO students (id, class_id, name, student_no)
-          VALUES ($1, $2, $3, $4)
+          INSERT INTO students (id, class_id, name, student_no, teacher_account)
+          VALUES ($1, $2, $3, $4, $5)
         `,
-        [randomUUID(), classItem.id, row.name, row.studentNo]
+        [randomUUID(), classItem.id, row.name, row.studentNo, String(account || "").trim()]
       );
       existingKeys.add(key);
       created += 1;
@@ -1281,7 +1453,7 @@ async function importStudents(payload) {
     created,
     skipped,
     total: rows.length,
-    students: await listStudents(classItem.id),
+    students: await listStudents(classItem.id, account),
   };
 }
 
@@ -3319,6 +3491,12 @@ async function getBatchResults(batchId) {
 }
 
 module.exports = {
+  assertBatchOwnership,
+  assertClassOwnership,
+  assertExamOwnership,
+  assertQuestionOwnership,
+  assertStudentOwnership,
+  assertTemplateOwnership,
   claimNextGradingJob,
   completeGradingJob,
   createClass,

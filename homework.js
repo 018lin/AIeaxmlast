@@ -99,7 +99,7 @@
 
   async function apiRequest(action, options = {}) {
     const url = `/api/mvp?action=${action}`;
-    const response = await fetch(url, {
+    const response = await window.AppAuth.request(url, {
       headers: {
         "Content-Type": "application/json",
         ...(options.headers || {}),

@@ -41,7 +41,13 @@
     try {
       const session = JSON.parse(raw);
 
-      if (!session || !session.account || !session.expiresAt || session.expiresAt <= Date.now()) {
+      if (
+        !session ||
+        !session.account ||
+        !session.token ||
+        !session.expiresAt ||
+        session.expiresAt <= Date.now()
+      ) {
         removeStorage(SESSION_KEY);
         return null;
       }
@@ -57,13 +63,14 @@
     return Boolean(getSession());
   }
 
-  function setSession(teacher) {
+  function setSession(teacher, token, expiresAt) {
     const now = Date.now();
     const session = {
       account: teacher.account,
       name: teacher.name || teacher.account,
+      token: token || "",
       issuedAt: now,
-      expiresAt: now + SESSION_TTL_MS,
+      expiresAt: Number(expiresAt) || now + SESSION_TTL_MS,
     };
     writeStorage(SESSION_KEY, JSON.stringify(session));
     return session;
@@ -115,7 +122,25 @@
       throw new Error(payload.message || "登录失败，请稍后重试。");
     }
 
-    return setSession(payload.teacher);
+    return setSession(payload.teacher, payload.token, payload.expiresAt);
+  }
+
+  async function request(url, options = {}) {
+    const session = getSession();
+    const headers = new Headers(options.headers || {});
+
+    if (session?.token) {
+      headers.set("Authorization", `Bearer ${session.token}`);
+    }
+
+    const response = await fetch(url, { ...options, headers });
+
+    if (response.status === 401) {
+      removeStorage(SESSION_KEY);
+      window.location.replace("./index.html");
+    }
+
+    return response;
   }
 
   function logout() {
@@ -166,6 +191,7 @@
     isLoggedIn,
     login,
     logout,
+    request,
     requireAuth,
     resolveNextPage,
     setAvatar,

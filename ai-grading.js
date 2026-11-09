@@ -188,7 +188,7 @@
     elements.resultArea.innerHTML = '<p class="empty-text">正在分析作答，请稍候...</p>';
 
     try {
-      const response = await fetch("/api/ai-grade", {
+      const response = await window.AppAuth.request("/api/ai-grade", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

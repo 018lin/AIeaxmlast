@@ -19,7 +19,7 @@
   };
 
   async function apiRequest(action, options = {}) {
-    const response = await fetch(`/api/mvp?action=${encodeURIComponent(action)}`, {
+    const response = await window.AppAuth.request(`/api/mvp?action=${encodeURIComponent(action)}`, {
       headers: {
         "Content-Type": "application/json",
         ...(options.headers || {}),

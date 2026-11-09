@@ -1,5 +1,6 @@
 const { db, ensureDatabase, readJsonBody, sendJson } = require("../lib/api-shared");
 const { gradeImages } = require("../lib/ai-grader");
+const { getRequestAccount } = require("../lib/auth");
 
 function validateGradeRequest(payload) {
   const maxScore = Number(payload.maxScore);
@@ -22,6 +23,13 @@ function validateGradeRequest(payload) {
 module.exports = async function handler(request, response) {
   if (request.method !== "POST") {
     sendJson(response, 405, { message: "Method not allowed" });
+    return;
+  }
+
+  const account = getRequestAccount(request);
+
+  if (!account) {
+    sendJson(response, 401, { message: "登录已过期，请重新登录。" });
     return;
   }
 
@@ -71,7 +79,7 @@ module.exports = async function handler(request, response) {
         model: grade.model,
         result: grade.result,
         rawContent: grade.rawContent,
-      });
+      }, account);
     } catch (error) {
       historyError = error.message || "AI 阅卷历史保存失败。";
     }

@@ -65,7 +65,7 @@
 
   async function apiRequest(action, options = {}) {
     const url = action.includes("&") ? `/api/mvp?action=${action}` : `/api/mvp?action=${encodeURIComponent(action)}`;
-    const response = await fetch(url, {
+    const response = await window.AppAuth.request(url, {
       headers: {
         "Content-Type": "application/json",
         ...(options.headers || {}),

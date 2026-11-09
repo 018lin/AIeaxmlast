@@ -26,17 +26,19 @@ DATABASE_URL=postgresql://username:password@your-neon-host/neondb?sslmode=requir
 DATABASE_SSL=true
 PORT=8080
 TEACHERS=018:018018:018老师,test:111222:测试老师
+AUTH_SECRET=请替换为随机长字符串
 ```
 
 线上部署时，在服务器或部署平台的环境变量面板中配置同名变量。Vercel 的 Neon 集成通常会自动注入 `POSTGRES_URL`，代码会优先读取 `DATABASE_URL`，没有时自动读取 `POSTGRES_URL`。
 
 ## 教师登录与默认班级
 
-除登录页外，`teacher.html`、`homework.html`、`batch-grading.html`、`class-setup.html` 都会在进入前校验登录状态，未登录会跳回登录页并在登录后返回原页面。
+除登录页外，`teacher.html`、`homework.html`、`batch-grading.html`、`class-setup.html`、`ai-grading.html` 都会在进入前校验登录状态，未登录会跳回登录页并在登录后返回原页面。
 
 - 账号密码由服务端 `POST /api/auth` 校验（`crypto.timingSafeEqual`）。`TEACHERS` 用逗号分隔多个账号，每项格式为 `账号:密码[:显示名]`，例如 `TEACHERS=018:018018:王老师,test:111222:李老师`；未配置 `TEACHERS` 时回退到 `TEACHER_ACCOUNT`、`TEACHER_PASSWORD`、`TEACHER_NAME`（默认测试账号 `018 / 018018`）。
-- 登录会话保存在浏览器 localStorage，有效期 7 天，退出登录后清除。
-- 控制台右上角显示当前默认班级，下拉即可切换；“增加班级”进入 `class-setup.html`，支持 Excel 名单批量导入或手动填写姓名学号（可动态新增多行）。
+- 登录成功后服务端签发 HMAC-SHA256 令牌（默认 7 天有效），前端在 localStorage 保存并随 `Authorization: Bearer` 头发送；令牌过期或缺失时接口返回 401，页面自动回到登录页。可通过可选环境变量 `AUTH_SECRET` 固定签名密钥，未配置时由教师账号配置派生。
+- **数据按教师账号隔离**：`classes`、`students`、`exams`、`ai_grading_history` 均带 `teacher_account` 列，列表只返回当前账号的数据，跨账号按 ID 读写返回 403。历史数据在迁移时默认归属初始账号 `018`。
+- 控制台右上角显示当前教师的默认班级，下拉即可切换；“增加班级”进入 `class-setup.html`，支持 Excel 名单批量导入或手动填写姓名学号（可动态新增多行）。
 - 默认班级会同步到作业批改与批量阅卷页面，班级、学生和考试下拉框自动按默认班级筛选。
 - 默认班级右侧为教师头像；未设置时显示白底胡萝卜色“教”字，支持上传图片（自动居中裁切为 256×256 JPEG）和恢复默认头像。
 
@@ -45,8 +47,10 @@ TEACHERS=018:018018:018老师,test:111222:测试老师
 
 项目已经包含 Vercel Serverless API：
 
-- `/api/ai-grade`：调用 DeepSeek 阅卷。
-- `/api/auth`：校验教师账号密码并返回教师信息。
+- `/api/ai-grade`：调用 DeepSeek 阅卷（需登录令牌）。
+- `/api/ai-grade-history`：读取或清空当前账号的单题批改历史（需登录令牌）。
+- `/api/auth`：校验教师账号密码并返回教师信息与登录令牌。
+- `/api/mvp`：班级、学生、作业、批量阅卷等接口（需登录令牌，按账号隔离）。
 - `/api/uploads`：保存和读取上传图片。
 - `/api/pairs`：保存和读取题目答案对应关系。
 
@@ -57,6 +61,7 @@ DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_MODEL=deepseek-v4-flash-vision-exp
 DATABASE_SSL=true
 TEACHERS=018:018018:018老师,test:111222:测试老师
+AUTH_SECRET=请替换为随机长字符串
 ```
 
 Neon Postgres 集成会自动配置 `POSTGRES_URL`。如果没有自动注入，也可以手动添加 `DATABASE_URL`。
@@ -67,7 +72,8 @@ Neon Postgres 集成会自动配置 `POSTGRES_URL`。如果没有自动注入，
 
 - `uploaded_images`：保存上传过的试卷、答案、单独试题、学生作答和裁剪图片。
 - `question_answer_pairs`：保存题目区域与答案区域的对应关系，并关联对应裁剪图和框选坐标。
-- `classes`、`students`、`exams`、`exam_questions`：保存班级、学生、考试和题目。
+- `classes`、`students`、`exams`、`exam_questions`：保存班级、学生、考试和题目；班级、学生、考试带 `teacher_account` 归属列。
+- `ai_grading_history`：保存单题 AI 批改历史，同样按 `teacher_account` 隔离。
 - `paper_templates`、`template_regions`：保存试卷模板图片和每道题的裁切区域。
 - `scan_batches`、`scanned_pages`、`answer_crops`、`grading_jobs`、`grading_results`：保存扫描批次、学生答卷、自动裁切结果、逐题阅卷任务和成绩明细。
 - `assignment_analyses`：保存每次作业的 AI 错因与教学建议分析结果（按批次唯一）。

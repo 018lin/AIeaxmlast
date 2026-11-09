@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
 const db = require("./db");
-const { authenticate } = require("./lib/auth");
+const { authenticate, getRequestAccount } = require("./lib/auth");
 const { gradeImages } = require("./lib/ai-grader");
 const { handleMvpRequest } = require("./lib/mvp-handler");
 
@@ -130,6 +130,13 @@ async function handleAuth(request, response) {
 }
 
 async function handleAiGrade(request, response) {
+  const account = getRequestAccount(request);
+
+  if (!account) {
+    sendJson(response, 401, { message: "登录已过期，请重新登录。" });
+    return;
+  }
+
   let payload;
 
   try {
@@ -174,7 +181,7 @@ async function handleAiGrade(request, response) {
         model: grade.model,
         result: grade.result,
         rawContent: grade.rawContent,
-      });
+      }, account);
     } catch (error) {
       historyError = error.message || "AI 阅卷历史保存失败。";
     }
@@ -295,8 +302,15 @@ async function handleListPairs(request, response) {
 }
 
 async function handleListAiGradeHistory(request, response) {
+  const account = getRequestAccount(request);
+
+  if (!account) {
+    sendJson(response, 401, { message: "登录已过期，请重新登录。" });
+    return;
+  }
+
   try {
-    const history = await db.listAiGradingHistory();
+    const history = await db.listAiGradingHistory(account);
     sendJson(response, 200, { history });
   } catch (error) {
     sendServiceError(response, error);
@@ -304,8 +318,15 @@ async function handleListAiGradeHistory(request, response) {
 }
 
 async function handleDeleteAiGradeHistory(request, response) {
+  const account = getRequestAccount(request);
+
+  if (!account) {
+    sendJson(response, 401, { message: "登录已过期，请重新登录。" });
+    return;
+  }
+
   try {
-    await db.deleteAiGradingHistory();
+    await db.deleteAiGradingHistory(account);
     sendJson(response, 200, { ok: true });
   } catch (error) {
     sendServiceError(response, error);
