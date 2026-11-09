@@ -887,36 +887,11 @@
   }
 
   .module-grid {
-    gap: 18px;
+    gap: 16px;
   }
 
-  .module-card {
-    min-height: 0;
-    gap: 18px;
-    padding: 22px 18px;
-    border-radius: 18px;
-  }
-
-  .module-icon {
-    width: 58px;
-    height: 58px;
-    border-radius: 15px;
-  }
-
-  .module-icon svg {
-    width: 30px;
-    height: 30px;
-  }
-
-  .module-copy strong {
-    font-size: clamp(24px, 6.6vw, 30px);
-    line-height: 1.25;
-  }
-
-  .module-action {
-    min-height: 42px;
-    padding: 0 16px;
-    font-size: 15px;
+  .module-tools {
+    gap: 10px;
   }
 
   .grading-shell {

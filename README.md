@@ -25,9 +25,7 @@ DEEPSEEK_MODEL=deepseek-v4-flash-vision-exp
 DATABASE_URL=postgresql://username:password@your-neon-host/neondb?sslmode=require
 DATABASE_SSL=true
 PORT=8080
-TEACHER_ACCOUNT=018
-TEACHER_PASSWORD=018018
-TEACHER_NAME=018老师
+TEACHERS=018:018018:018老师,test:111222:测试老师
 ```
 
 线上部署时，在服务器或部署平台的环境变量面板中配置同名变量。Vercel 的 Neon 集成通常会自动注入 `POSTGRES_URL`，代码会优先读取 `DATABASE_URL`，没有时自动读取 `POSTGRES_URL`。
@@ -36,7 +34,7 @@ TEACHER_NAME=018老师
 
 除登录页外，`teacher.html`、`homework.html`、`batch-grading.html`、`class-setup.html` 都会在进入前校验登录状态，未登录会跳回登录页并在登录后返回原页面。
 
-- 账号密码由服务端 `POST /api/auth` 校验（`crypto.timingSafeEqual`），可通过 `TEACHER_ACCOUNT`、`TEACHER_PASSWORD` 覆盖默认测试账号 `018 / 018018`；`TEACHER_NAME` 用于展示教师名称。
+- 账号密码由服务端 `POST /api/auth` 校验（`crypto.timingSafeEqual`）。`TEACHERS` 用逗号分隔多个账号，每项格式为 `账号:密码[:显示名]`，例如 `TEACHERS=018:018018:王老师,test:111222:李老师`；未配置 `TEACHERS` 时回退到 `TEACHER_ACCOUNT`、`TEACHER_PASSWORD`、`TEACHER_NAME`（默认测试账号 `018 / 018018`）。
 - 登录会话保存在浏览器 localStorage，有效期 7 天，退出登录后清除。
 - 控制台右上角显示当前默认班级，下拉即可切换；“增加班级”进入 `class-setup.html`，支持 Excel 名单批量导入或手动填写姓名学号（可动态新增多行）。
 - 默认班级会同步到作业批改与批量阅卷页面，班级、学生和考试下拉框自动按默认班级筛选。
@@ -58,9 +56,7 @@ TEACHER_NAME=018老师
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_MODEL=deepseek-v4-flash-vision-exp
 DATABASE_SSL=true
-TEACHER_ACCOUNT=018
-TEACHER_PASSWORD=018018
-TEACHER_NAME=018老师
+TEACHERS=018:018018:018老师,test:111222:测试老师
 ```
 
 Neon Postgres 集成会自动配置 `POSTGRES_URL`。如果没有自动注入，也可以手动添加 `DATABASE_URL`。

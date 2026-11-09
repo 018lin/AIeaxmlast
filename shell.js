@@ -91,6 +91,21 @@
     return state.classes.find((item) => item.id === classId) || null;
   }
 
+  function classLabel(classItem) {
+    if (!classItem) {
+      return "";
+    }
+
+    const name = String(classItem.name || "").trim();
+    const grade = String(classItem.grade || "").trim();
+
+    if (!grade || name.includes(grade)) {
+      return name;
+    }
+
+    return `${name}（${grade}）`;
+  }
+
   function classDisplayName(classItem) {
     if (!classItem) {
       if (state.classesError) {
@@ -100,7 +115,7 @@
       return state.classesLoaded ? "还没有班级" : "加载中…";
     }
 
-    return classItem.grade ? `${classItem.name}（${classItem.grade}）` : classItem.name;
+    return classLabel(classItem);
   }
 
   function studentCountFor(classId) {
@@ -148,7 +163,6 @@
 
     classOptions.innerHTML = state.classes
       .map((classItem) => {
-        const displayName = classItem.grade ? `${classItem.name}（${classItem.grade}）` : classItem.name;
         return `
           <button class="class-option ${classItem.id === state.classId ? "is-active" : ""}" type="button" data-class-id="${escapeHtml(classItem.id)}">
             <span class="class-option-name">${escapeHtml(classItem.name)}</span>
