@@ -1119,6 +1119,18 @@
           <strong>${gradedCount} / ${totalQuestions}</strong>
         </div>
       </div>
+      ${
+        submission.pageImage
+          ? `
+        <div class="submission-photo">
+          <span>学生答题照片</span>
+          <a href="${submission.pageImage}" target="_blank" rel="noopener">
+            <img class="graded-image" src="${submission.pageImage}" alt="${escapeHtml(submission.student.name)}的答题照片" loading="lazy" />
+          </a>
+        </div>
+      `
+          : ""
+      }
       <div class="graded-list">
         ${resultCards || '<p class="empty-text">暂无批改结果</p>'}
         ${missingCards}

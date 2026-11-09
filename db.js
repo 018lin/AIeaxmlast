@@ -2005,7 +2005,7 @@ async function getStudentSubmission(batchId, studentId, includeImages = false) {
     throw new Error("作业批次不存在。");
   }
 
-  const [resultsResult, questionsResult, progress] = await Promise.all([
+  const [resultsResult, questionsResult, progress, pageResult] = await Promise.all([
     getPool().query(
       `
         SELECT
@@ -2029,7 +2029,12 @@ async function getStudentSubmission(batchId, studentId, includeImages = false) {
         JOIN exam_questions q ON q.id = gr.question_id
         JOIN grading_jobs j ON j.id = gr.job_id
         JOIN answer_crops ac ON ac.id = j.answer_crop_id
-        JOIN uploaded_images ai ON ai.id = ac.crop_image_id
+        LEFT JOIN uploaded_images ai
+          ON ai.id = ac.crop_image_id
+          AND NOT (
+            COALESCE((ac.crop_box->>'width')::numeric, 0) = 1
+            AND COALESCE((ac.crop_box->>'height')::numeric, 0) = 1
+          )
         WHERE gr.batch_id = $1 AND gr.student_id = $2
         ORDER BY q.created_at ASC
       `,
@@ -2045,7 +2050,34 @@ async function getStudentSubmission(batchId, studentId, includeImages = false) {
       [batchResult.rows[0].exam_id]
     ),
     getStudentGradingProgress(batchId, studentId),
+    includeImages
+      ? getPool().query(
+          `
+            SELECT ai.mime_type, ai.image_data
+            FROM scanned_pages sp
+            JOIN uploaded_images ai ON ai.id = sp.image_id
+            WHERE sp.batch_id = $1 AND sp.student_id = $2
+            ORDER BY sp.created_at DESC
+            LIMIT 1
+          `,
+          [batchId, studentId]
+        )
+      : Promise.resolve({ rows: [] }),
   ]);
+
+  let pageImage = "";
+
+  if (includeImages && pageResult.rows[0]?.image_data) {
+    try {
+      const buffer = await sharp(Buffer.from(pageResult.rows[0].image_data))
+        .resize({ width: 1000, withoutEnlargement: true })
+        .jpeg({ quality: 78 })
+        .toBuffer();
+      pageImage = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+    } catch {
+      pageImage = "";
+    }
+  }
 
   const results = [];
 
@@ -2111,6 +2143,7 @@ async function getStudentSubmission(batchId, studentId, includeImages = false) {
       status: batchResult.rows[0].status,
     },
     progress,
+    pageImage,
     totalScore: Math.round(totalScore * 100) / 100,
     maxScore: Number(batchResult.rows[0].total_score || 0),
     results,
