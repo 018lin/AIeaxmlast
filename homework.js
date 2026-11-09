@@ -1041,6 +1041,8 @@
       setPendingImage(await readFileAsDataUrl(file));
     } catch {
       alert("图片读取失败，请重新选择。");
+    } finally {
+      event.target.value = "";
     }
   }
 
