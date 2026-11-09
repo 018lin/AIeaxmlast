@@ -89,7 +89,7 @@
             </div>
             <div class="hw-inline-controls">
               <select id="workExamSelect" data-select="exams" aria-label="切换作业"></select>
-              <button class="ghost-button" id="editExamButton" type="button">题目与模板</button>
+              <button class="ghost-button" id="editExamButton" type="button">高级设置</button>
               <button class="ghost-button" id="workRefreshButton" type="button">刷新</button>
             </div>
           </header>
@@ -165,24 +165,21 @@
         <div class="hw-drawer-body">
           <section class="hw-wizard-step" data-step="1">
             <form id="hwExamForm" class="compact-form hw-exam-form">
-              <label class="field-control">
-                <span>所属班级</span>
-                <select name="classId" data-select="classes"></select>
-              </label>
+              <p class="hw-hint" id="hwExamClassHint">当前班级：加载中…</p>
               <label class="field-control">
                 <span>作业名称</span>
                 <input name="name" placeholder="第 3 次作业" required />
               </label>
               <label class="field-control">
-                <span>科目</span>
-                <input name="subject" placeholder="数学" />
-              </label>
-              <label class="field-control">
                 <span>日期</span>
                 <input name="examDate" type="date" />
               </label>
+              <label class="field-control field-span-2">
+                <span>涉及知识点（逗号分隔）</span>
+                <input name="knowledgePoints" placeholder="函数, 单调性, 导数" />
+              </label>
               <div class="hw-wizard-actions">
-                <button class="primary-button" type="submit">下一步：录入题目</button>
+                <button class="primary-button" type="submit">创建作业</button>
               </div>
             </form>
           </section>
@@ -229,7 +226,7 @@
           </section>
 
           <section class="hw-wizard-step" data-step="3" hidden>
-            <p class="hw-hint">上传标准作业图片，选择题目后拖拽框选作答区域。批改会按区域自动裁题，没有标注区域时无法开始批改。</p>
+            <p class="hw-hint">可选功能：上传标准作业图片并框选题目区域，用于精确裁题；不设置区域时，AI 会直接对整份作业逐题批改。</p>
 
             <div class="template-toolbar">
               <label class="upload-tile compact-upload" for="hwTemplateUpload">

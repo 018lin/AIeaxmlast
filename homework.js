@@ -36,6 +36,7 @@
     listRefreshButton: $("#listRefreshButton"),
     newExamButton: $("#newExamButton"),
     examForm: $("#hwExamForm"),
+    examClassHint: $("#hwExamClassHint"),
     examDrawer: $("#examDrawer"),
     examDrawerTitle: $("#examDrawerTitle"),
     examDrawerHint: $("#examDrawerHint"),
@@ -255,8 +256,10 @@
   }
 
   function examStatusInfo(exam, progress) {
-    if (!exam.questionCount) {
-      return { label: "待录入题目", tone: "draft" };
+    const configured = exam.questionCount > 0 || (exam.knowledgePoints || []).length > 0;
+
+    if (!configured) {
+      return { label: "待完善", tone: "draft" };
     }
 
     if (!progress || !progress.studentCount) {
@@ -279,7 +282,7 @@
       elements.examCards.innerHTML = `
         <div class="hw-empty-card">
           <strong>还没有作业</strong>
-          <p>新建一份作业，录入题目后即可开始拍照批改。</p>
+          <p>新建一份作业，只需填写名称、日期和知识点，即可开始拍照批改。</p>
           <button class="primary-button" type="button" data-exam-action="create">新建作业</button>
         </div>
       `;
@@ -295,10 +298,10 @@
         const percent = studentCount ? Math.round((gradedCount / studentCount) * 100) : 0;
         const meta = [
           exam.className || "未绑定班级",
-          exam.subject || "未填科目",
+          exam.subject || "",
           exam.examDate ? formatDate(exam.examDate) : "",
-          `${exam.questionCount} 题`,
-          `${formatNumber(exam.totalScore)} 分`,
+          exam.questionCount ? `${exam.questionCount} 题` : "整卷 AI 批改",
+          exam.totalScore ? `${formatNumber(exam.totalScore)} 分` : "",
         ]
           .filter(Boolean)
           .join(" · ");
@@ -562,75 +565,191 @@
   }
 
   function setupTemplateSelection() {
-    let start = null;
+    const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+    const MIN_SIZE = 20;
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+    let drag = null;
     let box = null;
+    let selection = null;
 
-    elements.templateStage.addEventListener("pointerdown", (event) => {
-      if (!state.currentTemplate?.image || event.target !== elements.templateImage) {
+    function imagePoint(event) {
+      const rect = elements.templateImage.getBoundingClientRect();
+
+      return {
+        x: clamp(event.clientX - rect.left, 0, rect.width),
+        y: clamp(event.clientY - rect.top, 0, rect.height),
+      };
+    }
+
+    function imageSize() {
+      return {
+        width: elements.templateImage.clientWidth,
+        height: elements.templateImage.clientHeight,
+        left: elements.templateImage.offsetLeft,
+        top: elements.templateImage.offsetTop,
+      };
+    }
+
+    function applyBox() {
+      if (!box || !selection) {
         return;
       }
 
-      const rect = elements.templateImage.getBoundingClientRect();
-      start = {
-        x: Math.min(Math.max(event.clientX - rect.left, 0), rect.width),
-        y: Math.min(Math.max(event.clientY - rect.top, 0), rect.height),
-        rect,
+      const image = imageSize();
+      Object.assign(box.style, {
+        left: `${image.left + selection.left}px`,
+        top: `${image.top + selection.top}px`,
+        width: `${selection.width}px`,
+        height: `${selection.height}px`,
+      });
+    }
+
+    function commitSelection() {
+      const image = imageSize();
+
+      if (
+        !selection ||
+        !image.width ||
+        !image.height ||
+        selection.width < 8 ||
+        selection.height < 8
+      ) {
+        state.templateSelection = null;
+        elements.saveRegionButton.disabled = true;
+        return;
+      }
+
+      state.templateSelection = {
+        xRatio: clamp(selection.left / image.width, 0, 1),
+        yRatio: clamp(selection.top / image.height, 0, 1),
+        widthRatio: clamp(selection.width / image.width, 0, 1),
+        heightRatio: clamp(selection.height / image.height, 0, 1),
       };
-      clearSelectionBox();
+      elements.saveRegionButton.disabled = !elements.regionQuestionSelect.value;
+    }
+
+    function createBox() {
       box = document.createElement("div");
       box.className = "selection-box";
+      box.innerHTML = HANDLES.map(
+        (handle) => `<span class="selection-handle handle-${handle}" data-handle="${handle}"></span>`
+      ).join("");
       elements.templateStage.appendChild(box);
+    }
+
+    elements.templateStage.addEventListener("pointerdown", (event) => {
+      if (!state.currentTemplate?.image) {
+        return;
+      }
+
+      const point = imagePoint(event);
+      const handleNode = event.target.closest?.(".selection-handle");
+      const boxNode = event.target.closest?.(".selection-box");
+
+      if (event.target === elements.templateImage) {
+        clearSelectionBox();
+        createBox();
+        selection = { left: point.x, top: point.y, width: 0, height: 0 };
+        drag = { type: "draw", startX: point.x, startY: point.y };
+      } else if (handleNode && box?.isConnected && selection) {
+        drag = { type: "resize", handle: handleNode.dataset.handle, origin: { ...selection } };
+      } else if (boxNode && box?.isConnected && selection) {
+        drag = { type: "move", origin: { ...selection }, startX: point.x, startY: point.y };
+      } else {
+        return;
+      }
+
+      state.templateSelection = null;
+      elements.saveRegionButton.disabled = true;
+      applyBox();
       elements.templateStage.setPointerCapture(event.pointerId);
+      event.preventDefault();
     });
 
     elements.templateStage.addEventListener("pointermove", (event) => {
-      if (!start || !box) {
+      if (!drag || !box?.isConnected) {
         return;
       }
 
-      const x = Math.min(Math.max(event.clientX - start.rect.left, 0), start.rect.width);
-      const y = Math.min(Math.max(event.clientY - start.rect.top, 0), start.rect.height);
-      const left = Math.min(start.x, x);
-      const top = Math.min(start.y, y);
-      const width = Math.abs(x - start.x);
-      const height = Math.abs(y - start.y);
+      const point = imagePoint(event);
+      const image = imageSize();
 
-      Object.assign(box.style, {
-        left: `${left}px`,
-        top: `${top}px`,
-        width: `${width}px`,
-        height: `${height}px`,
-      });
-    });
-
-    elements.templateStage.addEventListener("pointerup", (event) => {
-      if (!start || !box) {
-        return;
-      }
-
-      const boxRect = box.getBoundingClientRect();
-      const imgRect = elements.templateImage.getBoundingClientRect();
-      const width = boxRect.width;
-      const height = boxRect.height;
-
-      if (width < 8 || height < 8) {
-        clearSelectionBox();
-        state.templateSelection = null;
-        elements.saveRegionButton.disabled = true;
-      } else {
-        state.templateSelection = {
-          xRatio: (boxRect.left - imgRect.left) / imgRect.width,
-          yRatio: (boxRect.top - imgRect.top) / imgRect.height,
-          widthRatio: width / imgRect.width,
-          heightRatio: height / imgRect.height,
+      if (drag.type === "draw") {
+        selection = {
+          left: Math.min(drag.startX, point.x),
+          top: Math.min(drag.startY, point.y),
+          width: Math.abs(point.x - drag.startX),
+          height: Math.abs(point.y - drag.startY),
         };
-        elements.saveRegionButton.disabled = !elements.regionQuestionSelect.value;
+      } else if (drag.type === "move") {
+        selection = {
+          ...drag.origin,
+          left: clamp(
+            drag.origin.left + (point.x - drag.startX),
+            0,
+            Math.max(0, image.width - drag.origin.width)
+          ),
+          top: clamp(
+            drag.origin.top + (point.y - drag.startY),
+            0,
+            Math.max(0, image.height - drag.origin.height)
+          ),
+        };
+      } else if (drag.type === "resize") {
+        const origin = drag.origin;
+        const right = origin.left + origin.width;
+        const bottom = origin.top + origin.height;
+        let left = origin.left;
+        let top = origin.top;
+        let width = origin.width;
+        let height = origin.height;
+
+        if (drag.handle.includes("w")) {
+          left = clamp(point.x, 0, right - MIN_SIZE);
+          width = right - left;
+        }
+
+        if (drag.handle.includes("e")) {
+          width = clamp(point.x, left + MIN_SIZE, image.width) - left;
+        }
+
+        if (drag.handle.includes("n")) {
+          top = clamp(point.y, 0, bottom - MIN_SIZE);
+          height = bottom - top;
+        }
+
+        if (drag.handle.includes("s")) {
+          height = clamp(point.y, top + MIN_SIZE, image.height) - top;
+        }
+
+        selection = { left, top, width, height };
       }
 
-      elements.templateStage.releasePointerCapture(event.pointerId);
-      start = null;
-      box = null;
+      applyBox();
+      event.preventDefault();
     });
+
+    function endDrag(event) {
+      if (!drag) {
+        return;
+      }
+
+      if (selection && (selection.width < MIN_SIZE || selection.height < MIN_SIZE)) {
+        clearSelectionBox();
+        box = null;
+        selection = null;
+      }
+
+      commitSelection();
+      drag = null;
+
+      if (elements.templateStage.hasPointerCapture?.(event.pointerId)) {
+        elements.templateStage.releasePointerCapture(event.pointerId);
+      }
+    }
+
+    elements.templateStage.addEventListener("pointerup", endDrag);
+    elements.templateStage.addEventListener("pointercancel", endDrag);
   }
 
   function switchView(view) {
@@ -670,7 +789,8 @@
     applyAnalysisTabUI(tab);
 
     if (tab !== "students") {
-      loadBatchAnalysis().catch((error) => emptyAnalysis(error.message));
+      state.lastBatchAnalysis = null;
+      loadBatchAnalysis(true).catch((error) => emptyAnalysis(error.message));
     }
   }
 
@@ -729,10 +849,10 @@
     elements.workHeaderTitle.textContent = exam.name;
     elements.workHeaderMeta.textContent = [
       exam.className || "未绑定班级",
-      exam.subject || "未填科目",
+      exam.subject || "",
       exam.examDate ? formatDate(exam.examDate) : "",
-      `${exam.questionCount} 题`,
-      `总分 ${formatNumber(exam.totalScore)}`,
+      exam.questionCount ? `${exam.questionCount} 题` : "整卷 AI 批改",
+      exam.totalScore ? `总分 ${formatNumber(exam.totalScore)}` : "",
     ]
       .filter(Boolean)
       .join(" · ");
@@ -767,7 +887,11 @@
           <strong>${summary.gradedCount} / ${summary.studentCount}</strong>
         </div>
         <div class="hw-bar"><i style="width: ${percent}%"></i></div>
-        <p>共 ${summary.questionCount} 题 · 总分 ${formatNumber(summary.maxScore)}</p>
+        <p>${
+          summary.questionCount
+            ? `共 ${summary.questionCount} 题 · 总分 ${formatNumber(summary.maxScore)}`
+            : "整卷 AI 批改 · 批改后自动生成题目与分数"
+        }</p>
       </div>
     `;
   }
@@ -1109,7 +1233,7 @@
 
     state.grading = true;
     elements.gradeStudentButton.disabled = true;
-    setWorkStatus("正在上传作业并按模板裁题…");
+    setWorkStatus("正在上传作业，AI 正在辨认题目并批改…");
 
     try {
       const processResult = await apiRequest("grade-student", {
@@ -1123,41 +1247,51 @@
       });
 
       if (!processResult.jobCount) {
-        throw new Error("没有生成可批改的题目，请检查模板区域是否覆盖题目。");
+        throw new Error(
+          processResult.wholePaper
+            ? "AI 没有识别出可批改的题目，请换一张更清晰的作业图片。"
+            : "没有生成可批改的题目，请检查模板区域是否覆盖题目。"
+        );
       }
 
-      setWorkStatus(`已生成 ${processResult.jobCount} 个题目任务，开始 AI 批改…`);
       let failedCount = 0;
-      let loops = 0;
 
-      while (loops < 100) {
-        loops += 1;
-        const payload = await apiRequest("grade-next", {
-          method: "POST",
-          body: JSON.stringify({
-            batchId: processResult.batchId,
-            studentId: state.activeStudentId,
-          }),
-        });
-        const progress = payload.studentProgress;
+      if (processResult.wholePaper) {
+        setWorkStatus(`AI 已批改 ${processResult.jobCount} 道题，正在刷新结果…`);
+      } else {
+        setWorkStatus(`已生成 ${processResult.jobCount} 个题目任务，开始 AI 批改…`);
+        let loops = 0;
 
-        if (progress) {
-          setWorkStatus(
-            `批改中 ${progress.done + progress.failed} / ${progress.total}${
-              progress.failed ? `，失败 ${progress.failed}` : ""
-            }`
-          );
-        }
+        while (loops < 100) {
+          loops += 1;
+          const payload = await apiRequest("grade-next", {
+            method: "POST",
+            body: JSON.stringify({
+              batchId: processResult.batchId,
+              studentId: state.activeStudentId,
+            }),
+          });
+          const progress = payload.studentProgress;
 
-        if (payload.failed) {
-          failedCount += 1;
-        }
+          if (progress) {
+            setWorkStatus(
+              `批改中 ${progress.done + progress.failed} / ${progress.total}${
+                progress.failed ? `，失败 ${progress.failed}` : ""
+              }`
+            );
+          }
 
-        if (payload.done) {
-          break;
+          if (payload.failed) {
+            failedCount += 1;
+          }
+
+          if (payload.done) {
+            break;
+          }
         }
       }
 
+      state.lastBatchAnalysis = null;
       await loadSubmission();
       await loadAssignment();
       await loadExamProgress();
@@ -1776,15 +1910,18 @@
     if (mode === "create") {
       elements.examDrawerTitle.textContent = "新建作业";
       elements.examForm.reset();
-      const classSelect = elements.examForm.querySelector('[data-select="classes"]');
+      const dateInput = elements.examForm.elements.examDate;
 
-      if (classSelect) {
-        classSelect.value = state.defaultClassId;
+      if (dateInput) {
+        dateInput.value = formatDate(new Date());
       }
 
-      elements.questionList.innerHTML = '<p class="empty-text">先完成第 1 步并保存作业。</p>';
+      const classItem = state.classes.find((item) => item.id === state.defaultClassId);
+      elements.examClassHint.textContent = classItem
+        ? `当前班级：${classItem.name}${classItem.grade ? `（${classItem.grade}）` : ""}`
+        : "还没有班级，请先到班级管理创建班级并导入名单。";
     } else {
-      elements.examDrawerTitle.textContent = "题目与模板";
+      elements.examDrawerTitle.textContent = "高级设置";
     }
 
     renderWizardStep();
@@ -1815,23 +1952,18 @@
 
     $$("[data-step-chip]").forEach((chip) => {
       const chipStep = Number(chip.dataset.stepChip);
-      chip.hidden = state.drawerMode === "manage" && chipStep === 1;
+      chip.hidden = state.drawerMode === "manage" ? chipStep === 1 : chipStep !== 1;
       chip.classList.toggle("is-active", chipStep === step);
       chip.classList.toggle("is-done", chipStep < step);
     });
 
     if (state.drawerMode === "create") {
-      elements.examDrawerHint.textContent =
-        step === 1
-          ? "先填写作业信息，下一步录入题目。"
-          : step === 2
-            ? `${exam?.name || "新作业"} · 添加本次作业的题目。`
-            : `${exam?.name || "新作业"} · 上传标准作业并框选题目区域。`;
+      elements.examDrawerHint.textContent = "填写作业名称、日期和知识点，创建后即可拍照或上传学生作业，由 AI 整卷批改。";
     } else {
       elements.examDrawerHint.textContent =
         step === 2
-          ? `${exam?.name || "当前作业"} · 补充或检查题目。`
-          : `${exam?.name || "当前作业"} · 上传标准作业并框选题目区域。`;
+          ? `${exam?.name || "当前作业"} · 可选：维护题目，不设置也能整卷批改。`
+          : `${exam?.name || "当前作业"} · 可选：上传标准作业并框选题目区域，用于精确裁题。`;
     }
 
     elements.wizardBackButton.hidden = state.drawerMode === "manage";
@@ -1856,22 +1988,32 @@
 
   async function handleExamSubmit(event) {
     event.preventDefault();
+
+    if (!state.defaultClassId) {
+      alert("请先在班级管理中创建班级并导入学生名单。");
+      return;
+    }
+
     const button = elements.examForm.querySelector("button[type='submit']");
     button.disabled = true;
 
     try {
+      const form = formPayload(elements.examForm);
       const payload = await apiRequest("create-exam", {
         method: "POST",
-        body: JSON.stringify(formPayload(elements.examForm)),
+        body: JSON.stringify({
+          classId: state.defaultClassId,
+          name: form.name,
+          examDate: form.examDate || null,
+          knowledgePoints: form.knowledgePoints,
+        }),
       });
       state.activeExamId = payload.exam.id;
       state.overview = null;
       state.lastBatchAnalysis = null;
       await loadBootstrap();
       await loadExamProgress();
-      state.wizardStep = 2;
-      elements.examDrawerTitle.textContent = "录入题目";
-      renderWizardStep();
+      finishWizard();
     } catch (error) {
       alert(error.message);
     } finally {

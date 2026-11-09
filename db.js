@@ -83,6 +83,32 @@ function asJsonArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeKnowledgePoints(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[，,\n]/);
+
+  return Array.from(
+    new Set(
+      raw
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function normalizeQuestionNo(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^第\s*/, "")
+    .replace(/\s*题$/, "")
+    .replace(/[.。:：]$/, "")
+    .trim();
+}
+
+function isWholePageCrop(value) {
+  const box = value && typeof value === "object" ? value : {};
+  return Number(box.width) === 1 && Number(box.height) === 1;
+}
+
 function getNumericValue(value) {
   const numericValue = Number(value);
   return Number.isFinite(numericValue) ? numericValue : null;
@@ -418,6 +444,7 @@ function mapExam(row) {
     examDate: row.exam_date,
     totalScore: Number(row.total_score || 0),
     questionCount: Number(row.question_count || 0),
+    knowledgePoints: asJsonArray(row.knowledge_points),
     createdAt: row.created_at,
   };
 }
@@ -573,11 +600,12 @@ async function createExam(payload) {
     throw new Error("考试名称不能为空。");
   }
 
+  const knowledgePoints = normalizeKnowledgePoints(payload.knowledgePoints);
   const result = await getPool().query(
     `
-      INSERT INTO exams (id, class_id, name, subject, exam_date, total_score)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, class_id, name, subject, exam_date, total_score, created_at
+      INSERT INTO exams (id, class_id, name, subject, exam_date, total_score, knowledge_points)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      RETURNING id, class_id, name, subject, exam_date, total_score, knowledge_points, created_at
     `,
     [
       randomUUID(),
@@ -586,6 +614,7 @@ async function createExam(payload) {
       String(payload.subject || "").trim(),
       payload.examDate || null,
       getNumericValue(payload.totalScore) || 0,
+      JSON.stringify(knowledgePoints),
     ]
   );
 
@@ -602,6 +631,7 @@ async function listExams() {
       e.subject,
       e.exam_date,
       e.total_score,
+      e.knowledge_points,
       e.created_at,
       COUNT(q.id) AS question_count
     FROM exams e
@@ -1158,6 +1188,7 @@ async function getExamRecord(examId) {
         e.subject,
         e.exam_date,
         e.total_score,
+        e.knowledge_points,
         e.created_at,
         COUNT(q.id) AS question_count
       FROM exams e
@@ -1716,6 +1747,209 @@ async function processStudentSubmission(batchId, studentId) {
   }
 }
 
+async function examHasTemplateRegions(examId) {
+  const result = await getPool().query(
+    `
+      SELECT 1
+      FROM paper_templates t
+      JOIN template_regions r ON r.template_id = t.id
+      WHERE t.exam_id = $1
+      LIMIT 1
+    `,
+    [examId]
+  );
+
+  return result.rowCount > 0;
+}
+
+async function getExamKnowledgePoints(examId) {
+  const exam = await getExamRecord(examId);
+  const questions = await listExamQuestions(examId);
+  const points = new Set(exam.knowledgePoints || []);
+
+  questions.forEach((question) => {
+    (question.knowledgePoints || []).forEach((point) => points.add(point));
+  });
+
+  return Array.from(points);
+}
+
+async function getStudentPageImage(batchId, studentId) {
+  const result = await getPool().query(
+    `
+      SELECT ui.image_data
+      FROM scanned_pages p
+      JOIN uploaded_images ui ON ui.id = p.image_id
+      WHERE p.batch_id = $1 AND p.student_id = $2
+      ORDER BY p.created_at ASC
+      LIMIT 1
+    `,
+    [batchId, studentId]
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  const buffer = await sharp(Buffer.from(result.rows[0].image_data))
+    .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82 })
+    .toBuffer();
+
+  return { image: `data:image/jpeg;base64,${buffer.toString("base64")}` };
+}
+
+async function saveWholePaperResults(payload) {
+  const questions = Array.isArray(payload.gradeResult?.questions) ? payload.gradeResult.questions : [];
+
+  if (!questions.length) {
+    throw new Error("AI 没有识别出可批改的题目，请换一张更清晰的作业图片。");
+  }
+
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN");
+    const pageResult = await client.query(
+      `
+        SELECT id, image_id
+        FROM scanned_pages
+        WHERE batch_id = $1 AND student_id = $2
+        ORDER BY created_at ASC
+        LIMIT 1
+      `,
+      [payload.batchId, payload.studentId]
+    );
+
+    if (pageResult.rowCount === 0) {
+      throw new Error("该学生还没有上传作业图片。");
+    }
+
+    const page = pageResult.rows[0];
+    const existingResult = await client.query(
+      "SELECT id, question_no FROM exam_questions WHERE exam_id = $1",
+      [payload.examId]
+    );
+    const questionMap = new Map(
+      existingResult.rows.map((row) => [normalizeQuestionNo(row.question_no), row.id])
+    );
+    const seenQuestions = new Set();
+    let count = 0;
+
+    for (const item of questions) {
+      const questionNo = normalizeQuestionNo(item.question_no ?? item.questionNo);
+
+      if (!questionNo || seenQuestions.has(questionNo)) {
+        continue;
+      }
+
+      seenQuestions.add(questionNo);
+
+      const maxScore = Math.max(0.5, Math.min(Number(item.max_score ?? item.maxScore) || 10, 1000));
+      const rawScore =
+        item.score === null || item.score === undefined || item.score === ""
+          ? NaN
+          : Number(item.score);
+
+      if (!Number.isFinite(rawScore)) {
+        continue;
+      }
+
+      const score = Math.max(0, Math.min(rawScore, maxScore));
+      const knowledgePoints = normalizeKnowledgePoints(item.knowledge_points ?? item.knowledgePoints);
+      let questionId = questionMap.get(questionNo);
+
+      if (!questionId) {
+        questionId = randomUUID();
+        await client.query(
+          `
+            INSERT INTO exam_questions (
+              id, exam_id, question_no, title, max_score, rubric, knowledge_points, question_type
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+          `,
+          [
+            questionId,
+            payload.examId,
+            questionNo,
+            String(item.title || "").trim(),
+            maxScore,
+            "",
+            JSON.stringify(knowledgePoints),
+            String(item.question_type ?? item.questionType ?? "").trim(),
+          ]
+        );
+        questionMap.set(questionNo, questionId);
+      }
+
+      const cropId = randomUUID();
+      const jobId = randomUUID();
+      await client.query(
+        `
+          INSERT INTO answer_crops (id, batch_id, scanned_page_id, student_id, question_id, crop_image_id, crop_box)
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        `,
+        [
+          cropId,
+          payload.batchId,
+          page.id,
+          payload.studentId,
+          questionId,
+          page.image_id,
+          JSON.stringify({ left: 0, top: 0, width: 1, height: 1 }),
+        ]
+      );
+      await client.query(
+        `
+          INSERT INTO grading_jobs (id, batch_id, answer_crop_id, status, finished_at)
+          VALUES ($1, $2, $3, 'done', now())
+        `,
+        [jobId, payload.batchId, cropId]
+      );
+      await client.query(
+        `
+          INSERT INTO grading_results (
+            id, job_id, batch_id, exam_id, student_id, question_id, score, max_score,
+            level, analysis, deductions, suggestions, raw_content, ai_result
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14::jsonb)
+        `,
+        [
+          randomUUID(),
+          jobId,
+          payload.batchId,
+          payload.examId,
+          payload.studentId,
+          questionId,
+          score,
+          maxScore,
+          String(item.level || "").trim(),
+          String(item.analysis || "").trim(),
+          JSON.stringify(asJsonArray(item.deductions)),
+          JSON.stringify(asJsonArray(item.suggestions)),
+          payload.rawContent || "",
+          JSON.stringify(item),
+        ]
+      );
+      count += 1;
+    }
+
+    if (!count) {
+      throw new Error("AI 没有识别出可批改的题目，请换一张更清晰的作业图片。");
+    }
+
+    await client.query("UPDATE scan_batches SET status = 'done' WHERE id = $1", [payload.batchId]);
+    await client.query("COMMIT");
+    await refreshExamTotalScore(payload.examId);
+    return { count };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function getStudentGradingProgress(batchId, studentId) {
   const result = await getPool().query(
     `
@@ -1788,6 +2022,7 @@ async function getStudentSubmission(batchId, studentId, includeImages = false) {
           gr.deductions,
           gr.suggestions,
           gr.created_at,
+          ac.crop_box,
           ai.mime_type AS answer_mime_type,
           ai.image_data AS answer_image_data
         FROM grading_results gr
@@ -1817,7 +2052,7 @@ async function getStudentSubmission(batchId, studentId, includeImages = false) {
   for (const row of resultsResult.rows) {
     let answerImage = "";
 
-    if (includeImages && row.answer_image_data) {
+    if (includeImages && row.answer_image_data && !isWholePageCrop(row.crop_box)) {
       try {
         const buffer = await sharp(Buffer.from(row.answer_image_data))
           .resize({ width: 560, withoutEnlargement: true })
@@ -2799,6 +3034,15 @@ async function getGradingJobPayload(jobId) {
 
 async function completeGradingJob(jobPayload, grade) {
   const result = grade.result && typeof grade.result === "object" ? grade.result : {};
+  const score =
+    result.score === null || result.score === undefined || result.score === ""
+      ? null
+      : getNumericValue(result.score);
+
+  if (score === null) {
+    throw new Error("AI 返回的评分格式不正确，请重新批改本题。");
+  }
+
   const client = await getPool().connect();
 
   try {
@@ -2831,7 +3075,7 @@ async function completeGradingJob(jobPayload, grade) {
         jobPayload.examId,
         jobPayload.studentId,
         jobPayload.questionId,
-        getNumericValue(result.score),
+        score,
         getNumericValue(result.max_score ?? jobPayload.maxScore) ?? jobPayload.maxScore,
         result.level || "",
         result.analysis || "",
@@ -3056,15 +3300,18 @@ module.exports = {
   createUpload,
   deleteAiGradingHistory,
   deleteUploads,
+  examHasTemplateRegions,
   failGradingJob,
   getAssignmentOverview,
   getBatchAnalysis,
   getBatchAnalysisAiPayload,
   getBatchResults,
   getClassHistoryAnalysis,
+  getExamKnowledgePoints,
   getGradingJobPayload,
   getOrCreateExamBatch,
   getStudentGradingProgress,
+  getStudentPageImage,
   getStudentHistoryAnalysis,
   getStudentSubmission,
   importStudents,
@@ -3085,5 +3332,6 @@ module.exports = {
   processStudentSubmission,
   replaceStudentSubmission,
   saveBatchAnalysis,
+  saveWholePaperResults,
   saveTemplateRegion,
 };

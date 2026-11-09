@@ -97,8 +97,11 @@ CREATE TABLE IF NOT EXISTS exams (
   subject text NOT NULL DEFAULT '',
   exam_date date,
   total_score numeric NOT NULL DEFAULT 0,
+  knowledge_points jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE exams ADD COLUMN IF NOT EXISTS knowledge_points jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS exams_class_created_idx
   ON exams (class_id, created_at DESC);
