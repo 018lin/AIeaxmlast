@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="./homework.css?v=20261109-a" />
     <link rel="stylesheet" href="./shell.css?v=20261029-topbar" />
     <script src="./auth.js?v=20261109-tenant"></script>
-    <script>window.AppAuth.requireAuth();</script>
+    <script>if (window.AppAuth.requireAuth()) window.location.replace('./desk.html' + window.location.hash);</script>
   </head>
   <body>
     <main class="grading-shell batch-shell homework-shell" aria-labelledby="homework-title">

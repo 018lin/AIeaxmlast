@@ -4,7 +4,7 @@
   const AVATAR_KEY_PREFIX = "aihw.avatar.v1.";
   const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-  const ALLOWED_PAGES = ["teacher.html", "homework.html", "batch-grading.html", "class-setup.html", "ai-grading.html"];
+  const ALLOWED_PAGES = ["desk.html", "teacher.html", "homework.html", "batch-grading.html", "class-setup.html", "ai-grading.html"];
 
   function readStorage(key) {
     try {
@@ -80,16 +80,18 @@
     const value = String(rawValue || "").trim();
 
     if (!value) {
-      return "./teacher.html";
+      return "./desk.html";
     }
 
-    const [pathname, query = ""] = value.split("?");
+    const [page, fragment = ""] = value.split("#");
+    const [pathname, query = ""] = page.split("?");
 
     if (!ALLOWED_PAGES.includes(pathname)) {
-      return "./teacher.html";
+      return "./desk.html";
     }
 
-    return `./${pathname}${query ? `?${query.replace(/[#]/g, "")}` : ""}`;
+    const hash = pathname === "desk.html" && /^(?:list|new|(?:capture|review|results|student)\/[a-zA-Z0-9-]+(?:\/[a-zA-Z0-9-]+)?)$/.test(fragment) ? `#${fragment}` : "";
+    return `./${pathname}${query ? `?${query}` : ""}${hash}`;
   }
 
   function requireAuth() {
@@ -97,7 +99,7 @@
       return true;
     }
 
-    const current = `${window.location.pathname.split("/").pop() || "teacher.html"}${window.location.search}`;
+    const current = `${window.location.pathname.split("/").pop() || "desk.html"}${window.location.search}${window.location.hash}`;
     window.location.replace(`./index.html?next=${encodeURIComponent(current)}`);
     return false;
   }

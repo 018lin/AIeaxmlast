@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="./styles.css?v=20261109-console2" />
     <link rel="stylesheet" href="./shell.css?v=20261109-console" />
     <script src="./auth.js?v=20261109-tenant"></script>
-    <script>window.AppAuth.requireAuth();</script>
+    <script>if (window.AppAuth.requireAuth()) window.location.replace('./desk.html');</script>
   </head>
   <body>
     <main class="console-shell console-shell-modules" aria-label="教师控制台">

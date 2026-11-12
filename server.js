@@ -6,6 +6,8 @@ const db = require("./db");
 const { authenticate, getRequestAccount } = require("./lib/auth");
 const { gradeImages } = require("./lib/ai-grader");
 const { handleMvpRequest } = require("./lib/mvp-handler");
+const { createWholePaperWorker } = require("./lib/whole-paper-worker");
+const wholePaperWorker = createWholePaperWorker({ db });
 
 const ROOT_DIR = __dirname;
 
@@ -204,8 +206,15 @@ async function readJsonPayload(request) {
   return JSON.parse(await readRequestBody(request));
 }
 
-async function ensureLocalDatabase() {
-  await db.initDatabase();
+let databaseInitialization;
+function ensureLocalDatabase() {
+  if (!databaseInitialization) {
+    databaseInitialization = db.initDatabase().catch((error) => {
+      databaseInitialization = null;
+      throw error;
+    });
+  }
+  return databaseInitialization;
 }
 
 async function handleCreateUpload(request, response) {
@@ -339,7 +348,10 @@ function serveStatic(request, response) {
   const normalizedPath = pathname === "/" ? "/index.html" : pathname;
   const filePath = path.resolve(ROOT_DIR, `.${normalizedPath}`);
 
-  if (filePath !== ROOT_DIR && !filePath.startsWith(`${ROOT_DIR}${path.sep}`)) {
+  // Only root-level frontend assets are public, never backend source, env files or tests.
+  const extension = path.extname(filePath).toLowerCase();
+  if (path.dirname(filePath) !== ROOT_DIR || !MIME_TYPES[extension] || extension === ".json" ||
+      ["db.js", "server.js"].includes(path.basename(filePath).toLowerCase())) {
     response.writeHead(403);
     response.end("Forbidden");
     return;
@@ -389,6 +401,7 @@ const server = http.createServer((request, response) => {
       readJsonBody: readJsonPayload,
       request,
       response,
+      workerAvailable: () => wholePaperWorker.isAvailable(),
     });
     return;
   }
@@ -426,8 +439,9 @@ const server = http.createServer((request, response) => {
   serveStatic(request, response);
 });
 
-db.initDatabase()
+ensureLocalDatabase()
   .then(() => {
+    wholePaperWorker.start();
     server.listen(PORT, () => {
       console.log(`AI grading server running at http://localhost:${PORT}`);
     });
@@ -436,3 +450,10 @@ db.initDatabase()
     console.error("Failed to initialize database:", error);
     process.exit(1);
   });
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.once(signal, () => {
+    wholePaperWorker.stop();
+    server.close();
+  });
+}

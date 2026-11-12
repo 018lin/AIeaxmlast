@@ -4,6 +4,7 @@ const { randomUUID } = require("crypto");
 const { Pool } = require("pg");
 const sharp = require("sharp");
 const XLSX = require("xlsx");
+const { validateDeskQuestions, validateWholePaperResult } = require("./lib/ai-grader");
 
 const MASTERY_MASTERED = 0.85;
 const MASTERY_DEVELOPING = 0.45;
@@ -130,11 +131,11 @@ async function createUpload({ kind, name, image }) {
 
 async function listUploads(kind) {
   const values = [];
-  let whereClause = "";
+  let whereClause = "WHERE NOT desk_private";
 
   if (kind) {
     values.push(kind);
-    whereClause = "WHERE kind = $1";
+    whereClause += " AND kind = $1";
   }
 
   const result = await getPool().query(
@@ -168,11 +169,18 @@ async function createImageUpload(client, { kind, name, image }) {
 
 async function deleteUploads(kind) {
   if (!kind) {
-    await getPool().query("DELETE FROM uploaded_images");
+    await getPool().query("DELETE FROM uploaded_images WHERE NOT desk_private");
     return;
   }
 
-  await getPool().query("DELETE FROM uploaded_images WHERE kind = $1", [kind]);
+  await getPool().query("DELETE FROM uploaded_images WHERE kind = $1 AND NOT desk_private", [kind]);
+}
+
+async function rejectDeskImageReferences(client, ids) {
+  const references = ids.filter(Boolean);
+  if (!references.length) return;
+  const privateImages = await client.query("SELECT id FROM uploaded_images WHERE id = ANY($1::uuid[]) AND desk_private", [references]);
+  if (privateImages.rowCount) throw forbiddenError("批改台照片不能用于旧版接口。");
 }
 
 async function createPair(payload) {
@@ -180,6 +188,7 @@ async function createPair(payload) {
 
   try {
     await client.query("BEGIN");
+    await rejectDeskImageReferences(client, [payload.paperImageId, payload.answerImageId]);
 
     const paperCrop = parseDataUrl(payload.paperCrop);
     const answerCrop = parseDataUrl(payload.answerCrop);
@@ -275,6 +284,7 @@ async function createAiGradingHistory(payload, account) {
 
   try {
     await client.query("BEGIN");
+    await rejectDeskImageReferences(client, [payload.questionImageId, payload.answerImageId]);
 
     const questionImageId =
       payload.questionImageId ||
@@ -3109,6 +3119,7 @@ async function claimNextGradingJob(batchId, studentId) {
             JOIN answer_crops ac ON ac.id = j.answer_crop_id
             WHERE j.batch_id = $1
               AND ac.student_id = $2
+              AND j.job_kind = 'crop'
               AND j.status IN ('pending', 'failed')
               AND j.attempts < 3
             ORDER BY j.created_at ASC
@@ -3121,7 +3132,7 @@ async function claimNextGradingJob(batchId, studentId) {
           `
             SELECT id
             FROM grading_jobs
-            WHERE batch_id = $1 AND status IN ('pending', 'failed') AND attempts < 3
+            WHERE batch_id = $1 AND job_kind = 'crop' AND status IN ('pending', 'failed') AND attempts < 3
             ORDER BY created_at ASC
             LIMIT 1
             FOR UPDATE SKIP LOCKED
@@ -3490,7 +3501,429 @@ async function getBatchResults(batchId) {
   };
 }
 
+// Desk writes and worker transitions always lock batch first, then jobs/pages.
+// This serializes capture/confirm/start and makes the final batch status race-free.
+const DESK_MAX_ATTEMPTS = 3;
+const DESK_LEASE_SECONDS = 120;
+
+function deskError(message, statusCode = 400) {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+function deskId(value, label = "ID") {
+  if (typeof value !== "string" || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value)) {
+    throw deskError(`${label} 格式不正确。`);
+  }
+  return value.toLowerCase();
+}
+
+function deskAccount(account) {
+  if (typeof account !== "string" || !account.trim()) throw deskError("请先登录。", 401);
+  return account.trim();
+}
+
+async function deskTransaction(work, readOnly = false) {
+  const client = await getPool().connect();
+  try {
+    await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function deskRecord(client, examId, account, lock = false) {
+  const result = await client.query(`
+    SELECT e.id AS exam_id, e.name, e.answer_image_id, e.student_order_snapshot,
+      b.id AS batch_id, b.status, b.capture_version, b.confirmed_version,
+      b.confirmed_page_ids, b.grading_started_at
+    FROM exams e JOIN scan_batches b ON b.exam_id = e.id AND b.desk_managed
+    WHERE e.id = $1 AND e.teacher_account = $2 AND e.desk_managed
+    ${lock ? "FOR UPDATE OF b" : ""}
+  `, [deskId(examId, "作业ID"), deskAccount(account)]);
+  if (!result.rowCount) throw forbiddenError("作业不存在或无权访问。");
+  return result.rows[0];
+}
+
+function requireDeskDraft(record) {
+  if (record.grading_started_at) throw deskError("已开始批改，不能修改照片或题目。", 409);
+}
+
+function sortDeskRoster(rows) {
+  // Compare numeric student numbers without losing precision (e.g. long IDs).
+  return rows.map((s) => ({ id: s.id, name: s.name, studentNo: s.student_no || "" })).sort((a, b) => {
+    const left = a.studentNo.trim(), right = b.studentNo.trim();
+    const ln = /^\d+$/.test(left), rn = /^\d+$/.test(right);
+    if (ln && rn && BigInt(left) !== BigInt(right)) return BigInt(left) < BigInt(right) ? -1 : 1;
+    if (ln !== rn) return ln ? -1 : 1;
+    if (!ln && left !== right) return left.localeCompare(right, "zh-CN", { numeric: true });
+    return a.name.localeCompare(b.name, "zh-CN") || a.id.localeCompare(b.id);
+  });
+}
+
+async function validateDeskImage(image) {
+  let parsed;
+  try {
+    if (typeof image !== "string" || image.length > 28 * 1024 * 1024) throw new Error();
+    parsed = parseDataUrl(image);
+    if (parsed.buffer.length > 20 * 1024 * 1024) throw new Error();
+    const decoder = sharp(parsed.buffer, { limitInputPixels: 40000000 });
+    const metadata = await decoder.metadata();
+    const expectedFormat = { "image/png": "png", "image/jpeg": "jpeg", "image/webp": "webp" }[parsed.mimeType];
+    if (!metadata.width || !metadata.height || metadata.width * metadata.height > 40000000 ||
+        (metadata.pages || 1) > 1 || metadata.format !== expectedFormat) throw new Error();
+    await decoder.resize(1, 1).toBuffer(); // Decode as well as inspect headers before replacing a good page.
+  } catch {
+    throw deskError("请提供有效的单页 PNG、JPG 或 WEBP 图片（不超过 20MB、4000万像素）。");
+  }
+  return parsed;
+}
+
+async function insertDeskImage(client, image, kind, name) {
+  const id = await createImageUpload(client, { image, kind, name });
+  await client.query("UPDATE uploaded_images SET desk_private = true WHERE id = $1", [id]);
+  return id;
+}
+
+async function insertDeskQuestions(client, examId, questions, autoGenerated) {
+  for (const q of questions) {
+    await client.query(`INSERT INTO exam_questions (id, exam_id, question_no, title, max_score, auto_generated)
+      VALUES ($1, $2, $3, $4, $5, $6)`, [randomUUID(), examId, q.questionNo, q.title, q.maxScore, autoGenerated]);
+  }
+  await client.query("UPDATE exams SET total_score = $2 WHERE id = $1", [examId, questions.reduce((sum, q) => sum + q.maxScore, 0)]);
+}
+
+async function createDeskExam(payload, account, recognizeAnswerQuestions) {
+  const classId = deskId(payload.classId, "班级ID");
+  account = deskAccount(account);
+  const name = typeof payload.name === "string" ? payload.name.trim() : "";
+  if (!name || name.length > 200) throw deskError("作业名称必须为 1 至 200 字。");
+  if (typeof payload.examDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(payload.examDate) ||
+      !Number.isFinite(Date.parse(payload.examDate)) || new Date(payload.examDate).toISOString().slice(0, 10) !== payload.examDate) {
+    throw deskError("请选择有效的作业日期（YYYY-MM-DD）。");
+  }
+  await assertClassOwnership(classId, account);
+  await validateDeskImage(payload.answerImage);
+  // Recognition occurs exactly once, outside the write transaction. Failure leaves no partial exam/upload.
+  const recognized = await recognizeAnswerQuestions(payload.answerImage);
+  const questions = validateDeskQuestions(recognized.questions);
+  return deskTransaction(async (client) => {
+    const owned = await client.query("SELECT id FROM classes WHERE id = $1 AND teacher_account = $2 FOR UPDATE", [classId, account]);
+    if (!owned.rowCount) throw forbiddenError("班级不存在或无权访问。");
+    const roster = await client.query("SELECT id, name, student_no FROM students WHERE class_id = $1 AND teacher_account = $2 FOR SHARE", [classId, account]);
+    const snapshot = sortDeskRoster(roster.rows);
+    if (!snapshot.length) throw deskError("班级名单为空，请先导入学生。");
+    const answerId = await insertDeskImage(client, payload.answerImage, "answer", `${name}-教师答案`);
+    const examId = randomUUID(), batchId = randomUUID();
+    await client.query(`INSERT INTO exams
+      (id, class_id, name, exam_date, teacher_account, desk_managed, answer_image_id, answer_total_score, student_order_snapshot)
+      VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8::jsonb)`,
+    [examId, classId, name, payload.examDate, account, answerId, questions.reduce((sum, q) => sum + q.maxScore, 0), JSON.stringify(snapshot)]);
+    await client.query("INSERT INTO scan_batches (id, exam_id, name, desk_managed) VALUES ($1, $2, $3, true)", [batchId, examId, name]);
+    await insertDeskQuestions(client, examId, questions, true);
+    return { examId, batchId };
+  });
+}
+
+async function resetDeskConfirmation(client, batchId) {
+  await client.query(`UPDATE scan_batches SET capture_version = capture_version + 1,
+    confirmed_version = NULL, confirmed_page_ids = '[]'::jsonb, status = 'draft' WHERE id = $1`, [batchId]);
+}
+
+async function captureDeskPage(payload, account) {
+  const studentId = deskId(payload.studentId, "学生ID");
+  if (!Number.isInteger(payload.captureOrder) || payload.captureOrder < 0) throw deskError("拍摄序号必须为从 0 开始的整数。");
+  if (payload.name !== undefined && (typeof payload.name !== "string" || payload.name.length > 500)) throw deskError("图片名称无效。");
+  // Validate tenant and snapshot before image processing; revalidate under lock before writing.
+  const preliminary = await deskRecord(getPool(), payload.examId, account);
+  requireDeskDraft(preliminary);
+  if (preliminary.student_order_snapshot[payload.captureOrder]?.id !== studentId) throw deskError("学生与固定名单拍摄序号不匹配。", 409);
+  await validateDeskImage(payload.image);
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, payload.examId, account, true);
+    requireDeskDraft(record);
+    if (record.student_order_snapshot[payload.captureOrder]?.id !== studentId) throw deskError("学生与固定名单拍摄序号不匹配。", 409);
+    const owned = await client.query("SELECT id FROM students WHERE id = $1 AND teacher_account = $2 FOR SHARE", [studentId, deskAccount(account)]);
+    if (!owned.rowCount) throw forbiddenError("学生不存在或无权访问。");
+    // Upload first; deletion, replacement and confirmation reset share this transaction.
+    const imageId = await insertDeskImage(client, payload.image, "scanned_page", payload.name || "学生作答");
+    const previous = await client.query("DELETE FROM scanned_pages WHERE batch_id = $1 AND student_id = $2 RETURNING image_id", [record.batch_id, studentId]);
+    await client.query(`INSERT INTO scanned_pages (id, batch_id, student_id, image_id, original_name, capture_order)
+      VALUES ($1, $2, $3, $4, $5, $6)`, [randomUUID(), record.batch_id, studentId, imageId, payload.name || "", payload.captureOrder]);
+    for (const row of previous.rows) await client.query("DELETE FROM uploaded_images WHERE id = $1 AND desk_private", [row.image_id]);
+    await resetDeskConfirmation(client, record.batch_id);
+    return {};
+  });
+}
+
+function exactDeskPages(requested, current) {
+  return Array.isArray(requested) && requested.length > 0 && requested.length === current.length &&
+    new Set(requested).size === requested.length && current.every((id) => requested.includes(id));
+}
+
+async function confirmDeskPages(payload, account) {
+  if (!Array.isArray(payload.pageIds) || !payload.pageIds.length) throw deskError("请先拍摄并确认照片。");
+  const ids = payload.pageIds.map((id) => deskId(id, "照片ID"));
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, payload.examId, account, true);
+    requireDeskDraft(record);
+    const pages = await client.query("SELECT id FROM scanned_pages WHERE batch_id = $1 ORDER BY capture_order", [record.batch_id]);
+    if (!exactDeskPages(ids, pages.rows.map((p) => p.id))) throw deskError("照片列表已改变，请刷新并重新确认。", 409);
+    await client.query(`UPDATE scan_batches SET confirmed_version = capture_version,
+      confirmed_page_ids = $2::jsonb, status = 'confirmed' WHERE id = $1`, [record.batch_id, JSON.stringify(ids)]);
+    return {};
+  });
+}
+
+async function updateDeskQuestions(payload, account) {
+  const questions = validateDeskQuestions(payload.questions);
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, payload.examId, account, true);
+    requireDeskDraft(record);
+    await client.query("DELETE FROM exam_questions WHERE exam_id = $1", [record.exam_id]);
+    await insertDeskQuestions(client, record.exam_id, questions, false);
+    await resetDeskConfirmation(client, record.batch_id);
+    return {};
+  });
+}
+
+async function startDeskGrading(payload, account) {
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, payload.examId, account, true);
+    if (record.grading_started_at) return {}; // Never enqueue twice, including after completion/failure.
+    const pages = await client.query("SELECT id FROM scanned_pages WHERE batch_id = $1 ORDER BY capture_order", [record.batch_id]);
+    if (record.confirmed_version === null || record.confirmed_version !== record.capture_version ||
+        !exactDeskPages(record.confirmed_page_ids, pages.rows.map((p) => p.id))) {
+      throw deskError("请先确认当前全部照片和题目。", 409);
+    }
+    const questions = await client.query('SELECT question_no AS "questionNo", title, max_score FROM exam_questions WHERE exam_id = $1', [record.exam_id]);
+    validateDeskQuestions(questions.rows.map((q) => ({ ...q, maxScore: Number(q.max_score) })));
+    for (const page of pages.rows) {
+      await client.query(`INSERT INTO grading_jobs (id, batch_id, scanned_page_id, job_kind)
+        VALUES ($1, $2, $3, 'whole_paper') ON CONFLICT (scanned_page_id) WHERE job_kind = 'whole_paper' DO NOTHING`,
+      [randomUUID(), record.batch_id, page.id]);
+    }
+    await client.query("UPDATE scan_batches SET status = 'grading', grading_started_at = now() WHERE id = $1", [record.batch_id]);
+    return {};
+  });
+}
+
+async function retryDeskGrading(payload, account) {
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, payload.examId, account, true);
+    if (!record.grading_started_at) throw deskError("尚未开始批改。", 409);
+    const retried = await client.query(`UPDATE grading_jobs SET status = 'pending', error = '', finished_at = NULL,
+      lease_token = NULL, lease_expires_at = NULL
+      WHERE batch_id = $1 AND job_kind = 'whole_paper' AND status = 'failed' AND attempts < $2 RETURNING id`, [record.batch_id, DESK_MAX_ATTEMPTS]);
+    if (!retried.rowCount) {
+      const exhausted = await client.query("SELECT id FROM grading_jobs WHERE batch_id = $1 AND job_kind = 'whole_paper' AND status = 'failed'", [record.batch_id]);
+      if (exhausted.rowCount) throw deskError("失败任务已达到最多 3 次尝试，不能继续重试。", 409);
+    }
+    await settleDeskBatch(client, record.batch_id);
+    return {};
+  });
+}
+
+async function listDeskAssignments(account) {
+  const result = await getPool().query(`
+    SELECT e.id, e.name, c.name AS class_name, to_char(e.exam_date, 'YYYY-MM-DD') AS exam_date,
+      b.id AS batch_id, b.status, jsonb_array_length(e.student_order_snapshot) AS student_count,
+      (SELECT COUNT(*) FROM scanned_pages p WHERE p.batch_id = b.id) AS captured_count,
+      (SELECT COUNT(*) FROM grading_jobs j WHERE j.batch_id = b.id AND j.job_kind = 'whole_paper' AND j.status = 'done') AS done_count,
+      (SELECT COUNT(*) FROM grading_results r WHERE r.batch_id = b.id AND r.needs_review) AS review_count,
+      (SELECT AVG(t.score) FROM (SELECT SUM(COALESCE(r.final_score, r.score)) AS score FROM grading_results r
+        JOIN grading_jobs j ON j.id = r.job_id AND j.status = 'done'
+        WHERE r.batch_id = b.id GROUP BY r.student_id) t) AS average_score
+    FROM exams e JOIN scan_batches b ON b.exam_id = e.id AND b.desk_managed
+    LEFT JOIN classes c ON c.id = e.class_id
+    WHERE e.teacher_account = $1 AND e.desk_managed ORDER BY e.created_at DESC
+  `, [deskAccount(account)]);
+  return { assignments: result.rows.map((r) => ({
+    id: r.id, name: r.name, className: r.class_name || "", examDate: r.exam_date,
+    batchId: r.batch_id, status: r.status, studentCount: Number(r.student_count),
+    capturedCount: Number(r.captured_count), doneCount: Number(r.done_count), reviewCount: Number(r.review_count),
+    averageScore: r.average_score === null ? null : Number(r.average_score),
+  })) };
+}
+
+async function getDeskDetail(examId, account) {
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, examId, account);
+    const pages = await client.query(`SELECT p.id, p.student_id, p.capture_order, COALESCE(j.status, 'captured') AS status, COALESCE(j.error, '') AS error
+      FROM scanned_pages p LEFT JOIN grading_jobs j ON j.scanned_page_id = p.id AND j.job_kind = 'whole_paper'
+      WHERE p.batch_id = $1 ORDER BY p.capture_order`, [record.batch_id]);
+    const questions = await client.query("SELECT id, question_no, max_score, title FROM exam_questions WHERE exam_id = $1 ORDER BY created_at, question_no", [record.exam_id]);
+    const results = await client.query(`SELECT r.*, q.question_no FROM grading_results r
+      JOIN exam_questions q ON q.id = r.question_id WHERE r.batch_id = $1 ORDER BY q.created_at, q.question_no`, [record.batch_id]);
+    return {
+      exam: { id: record.exam_id, name: record.name }, batch: { id: record.batch_id, status: record.status },
+      students: record.student_order_snapshot,
+      pages: pages.rows.map((p) => ({ id: p.id, studentId: p.student_id, captureOrder: p.capture_order, status: p.status, error: p.error })),
+      questions: questions.rows.map((q) => ({ id: q.id, questionNo: q.question_no, maxScore: Number(q.max_score), title: q.title })),
+      results: results.rows.map((r) => ({ studentId: r.student_id, questionNo: r.question_no,
+        score: Number(r.final_score ?? r.score), maxScore: Number(r.max_score), analysis: r.analysis,
+        suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review })),
+    };
+  }, true);
+}
+
+async function getDeskImage(examId, studentId, account, thumbnail = false) {
+  studentId = deskId(studentId, "学生ID");
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, examId, account);
+    if (!record.student_order_snapshot.some((s) => s.id === studentId)) throw forbiddenError("学生不在本作业名单中。");
+    const image = await client.query(`SELECT i.mime_type, i.image_data FROM scanned_pages p
+      JOIN uploaded_images i ON i.id = p.image_id WHERE p.batch_id = $1 AND p.student_id = $2`, [record.batch_id, studentId]);
+    if (!image.rowCount) throw deskError("该学生尚未拍摄照片。", 400);
+    if (thumbnail) {
+      const preview = await sharp(image.rows[0].image_data).rotate().resize({ width: 240, height: 320, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 70 }).toBuffer();
+      return { image: bufferToDataUrl("image/jpeg", preview) };
+    }
+    return { image: bufferToDataUrl(image.rows[0].mime_type, image.rows[0].image_data) };
+  }, true);
+}
+
+async function assertLegacyMutationAllowed(action, payload, account) {
+  const targets = {
+    "create-question": [["examId", "exams", "id"]], "create-template": [["examId", "exams", "id"]],
+    "create-batch": [["examId", "exams", "id"]], "grade-student": [["examId", "exams", "id"]],
+    "upload-page": [["batchId", "scan_batches", "exam_id"]], "process-batch": [["batchId", "scan_batches", "exam_id"]],
+    "grade-next": [["batchId", "scan_batches", "exam_id"]], "analyze-batch": [["batchId", "scan_batches", "exam_id"]],
+    "save-region": [["templateId", "paper_templates", "exam_id"], ["questionId", "exam_questions", "exam_id"]],
+  };
+  for (const [field, table, column] of targets[action] || []) {
+    const id = deskId(payload[field], field);
+    const result = await getPool().query(`SELECT e.desk_managed FROM ${table} t JOIN exams e ON e.id = t.${column}
+      WHERE t.id = $1 AND e.teacher_account = $2`, [id, deskAccount(account)]);
+    if (!result.rowCount) throw forbiddenError("资源不存在或无权访问。");
+    if (result.rows[0].desk_managed) throw deskError("此作业由批改台管理，请使用 desk 接口。", 409);
+  }
+}
+
+async function settleDeskBatch(client, batchId) {
+  // Caller holds the batch lock, so concurrent completions cannot leave it in grading forever.
+  await client.query(`UPDATE scan_batches b SET status = CASE
+    WHEN EXISTS (SELECT 1 FROM grading_jobs j WHERE j.batch_id = b.id AND j.status IN ('pending', 'running')) THEN 'grading'
+    WHEN EXISTS (SELECT 1 FROM grading_jobs j WHERE j.batch_id = b.id AND j.status = 'failed') THEN 'failed'
+    WHEN EXISTS (SELECT 1 FROM grading_results r WHERE r.batch_id = b.id AND r.needs_review) THEN 'needs_review'
+    ELSE 'done' END WHERE b.id = $1 AND b.desk_managed`, [batchId]);
+}
+
+async function recoverWholePaperJobs() {
+  return deskTransaction(async (client) => {
+    const batches = await client.query(`SELECT b.id FROM scan_batches b WHERE b.desk_managed AND EXISTS (
+      SELECT 1 FROM grading_jobs j WHERE j.batch_id = b.id AND j.job_kind = 'whole_paper'
+        AND j.status = 'running' AND (j.lease_expires_at IS NULL OR j.lease_expires_at <= now()))
+      ORDER BY b.created_at LIMIT 20 FOR UPDATE OF b SKIP LOCKED`);
+    for (const batch of batches.rows) {
+      await client.query(`UPDATE grading_jobs SET status = CASE WHEN attempts < $2 THEN 'pending' ELSE 'failed' END,
+        error = '工作进程中断或租约过期', lease_token = NULL, lease_expires_at = NULL,
+        finished_at = CASE WHEN attempts < $2 THEN NULL ELSE now() END
+        WHERE batch_id = $1 AND job_kind = 'whole_paper' AND status = 'running'
+          AND (lease_expires_at IS NULL OR lease_expires_at <= now())`, [batch.id, DESK_MAX_ATTEMPTS]);
+      await settleDeskBatch(client, batch.id);
+    }
+  });
+}
+
+async function claimWholePaperJob() {
+  return deskTransaction(async (client) => {
+    const batches = await client.query(`SELECT b.id FROM scan_batches b WHERE b.desk_managed AND b.grading_started_at IS NOT NULL
+      AND EXISTS (SELECT 1 FROM grading_jobs j WHERE j.batch_id = b.id AND j.job_kind = 'whole_paper'
+        AND j.status = 'pending' AND j.attempts < $1)
+      ORDER BY b.created_at LIMIT 1 FOR UPDATE OF b SKIP LOCKED`, [DESK_MAX_ATTEMPTS]);
+    if (!batches.rowCount) return null;
+    const jobs = await client.query(`SELECT id FROM grading_jobs WHERE batch_id = $1 AND job_kind = 'whole_paper'
+      AND status = 'pending' AND attempts < $2 ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`, [batches.rows[0].id, DESK_MAX_ATTEMPTS]);
+    if (!jobs.rowCount) return null;
+    const token = randomUUID();
+    const result = await client.query(`UPDATE grading_jobs SET status = 'running', attempts = attempts + 1,
+      error = '', started_at = now(), finished_at = NULL, lease_token = $2,
+      lease_expires_at = now() + $3 * interval '1 second' WHERE id = $1 RETURNING id, batch_id`, [jobs.rows[0].id, token, DESK_LEASE_SECONDS]);
+    await client.query("UPDATE scan_batches SET status = 'grading' WHERE id = $1", [batches.rows[0].id]);
+    return { id: result.rows[0].id, batchId: result.rows[0].batch_id, leaseToken: token };
+  });
+}
+
+async function renewWholePaperLease(job) {
+  const result = await getPool().query(`UPDATE grading_jobs SET lease_expires_at = now() + $3 * interval '1 second'
+    WHERE id = $1 AND lease_token = $2 AND status = 'running' AND lease_expires_at > now()`, [job.id, job.leaseToken, DESK_LEASE_SECONDS]);
+  return result.rowCount > 0;
+}
+
+async function getWholePaperJobPayload(job) {
+  const result = await getPool().query(`SELECT e.name, e.id AS exam_id, p.student_id,
+    answer.mime_type AS answer_mime, answer.image_data AS answer_data,
+    student.mime_type AS student_mime, student.image_data AS student_data
+    FROM grading_jobs j JOIN scan_batches b ON b.id = j.batch_id AND b.desk_managed
+    JOIN exams e ON e.id = b.exam_id AND e.desk_managed
+    JOIN scanned_pages p ON p.id = j.scanned_page_id AND p.batch_id = b.id
+    JOIN uploaded_images answer ON answer.id = e.answer_image_id
+    JOIN uploaded_images student ON student.id = p.image_id
+    WHERE j.id = $1 AND j.lease_token = $2 AND j.status = 'running' AND j.lease_expires_at > now()`, [job.id, job.leaseToken]);
+  if (!result.rowCount) throw deskError("任务租约已失效或图片不存在。", 409);
+  const row = result.rows[0];
+  const questions = await listExamQuestions(row.exam_id);
+  return { examName: row.name, expectedQuestions: questions,
+    teacherAnswerImage: bufferToDataUrl(row.answer_mime, row.answer_data),
+    studentImage: bufferToDataUrl(row.student_mime, row.student_data) };
+}
+
+async function lockWholePaperJob(client, job) {
+  await client.query("SELECT id FROM scan_batches WHERE id = $1 AND desk_managed FOR UPDATE", [job.batchId]);
+  const result = await client.query(`SELECT j.*, p.student_id, b.exam_id FROM grading_jobs j
+    JOIN scanned_pages p ON p.id = j.scanned_page_id JOIN scan_batches b ON b.id = j.batch_id
+    WHERE j.id = $1 AND j.batch_id = $2 AND j.lease_token = $3 AND j.job_kind = 'whole_paper'
+      AND j.status = 'running' AND j.lease_expires_at > now() FOR UPDATE OF j`, [job.id, job.batchId, job.leaseToken]);
+  return result.rows[0] || null;
+}
+
+async function completeWholePaperJob(job, grade) {
+  return deskTransaction(async (client) => {
+    const row = await lockWholePaperJob(client, job);
+    if (!row) return false; // Fencing: late/stale workers and duplicate completion cannot write.
+    const expected = await client.query("SELECT id, question_no, title, max_score FROM exam_questions WHERE exam_id = $1", [row.exam_id]);
+    const questions = expected.rows.map((q) => ({ id: q.id, questionNo: q.question_no, title: q.title, maxScore: Number(q.max_score) }));
+    const result = validateWholePaperResult(grade.result, questions);
+    const questionMap = new Map(questions.map((q) => [q.questionNo, q.id]));
+    for (const item of result.questions) {
+      await client.query(`INSERT INTO grading_results
+        (id, job_id, batch_id, exam_id, student_id, question_id, score, max_score, analysis,
+         suggestions, deductions, ai_result, confidence, needs_review)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14)
+        ON CONFLICT (job_id, question_id) DO NOTHING`, [randomUUID(), job.id, job.batchId, row.exam_id, row.student_id,
+        questionMap.get(item.question_no), item.score, item.max_score, item.analysis,
+        JSON.stringify(item.suggestions), JSON.stringify(item.deductions), JSON.stringify(item), item.confidence, item.needs_review]);
+    }
+    await client.query(`UPDATE grading_jobs SET status = 'done', finished_at = now(), error = '',
+      lease_token = NULL, lease_expires_at = NULL, overall_feedback = $2::jsonb WHERE id = $1`, [job.id, JSON.stringify({
+      analysis: result.overall_analysis, suggestions: result.overall_suggestions, model: grade.model || "",
+    })]);
+    await settleDeskBatch(client, job.batchId);
+    return true;
+  });
+}
+
+async function failWholePaperJob(job, message) {
+  return deskTransaction(async (client) => {
+    if (!(await lockWholePaperJob(client, job))) return false;
+    await client.query(`UPDATE grading_jobs SET status = 'failed', finished_at = now(), error = $2,
+      lease_token = NULL, lease_expires_at = NULL WHERE id = $1`, [job.id, String(message || "评分失败。").slice(0, 1000)]);
+    await settleDeskBatch(client, job.batchId);
+    return true;
+  });
+}
+
 module.exports = {
+  createDeskExam, captureDeskPage, confirmDeskPages, updateDeskQuestions, startDeskGrading, retryDeskGrading,
+  listDeskAssignments, getDeskDetail, getDeskImage, assertLegacyMutationAllowed,
+  recoverWholePaperJobs, claimWholePaperJob, renewWholePaperLease, getWholePaperJobPayload,
+  completeWholePaperJob, failWholePaperJob,
   assertBatchOwnership,
   assertClassOwnership,
   assertExamOwnership,

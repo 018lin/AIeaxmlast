@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f5f6fa"><title>作业批改台 - AI数智作业平台</title>
+<link rel="stylesheet" href="./desk.css?v=20261112-p1">
+<script src="./auth.js?v=20261112-p1"></script><script>window.AppAuth.requireAuth();</script>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="#list">AI数智作业平台</a>
+<details class="teacher-menu"><summary id="teacherName">教师菜单</summary><nav aria-label="教师菜单"><a href="./class-setup.html">班级管理</a><a href="./ai-grading.html">顺手批一道</a><button type="button" data-action="logout">切换教师</button><button type="button" data-action="logout">退出登录</button></nav></details></header>
+<div id="notice" role="status" aria-live="polite" hidden></div>
+<main id="app" tabindex="-1"><p class="empty">正在加载作业…</p></main>
+<input id="photoFile" type="file" accept="image/*" hidden>
+<dialog id="photoDialog"><button type="button" id="closePhoto">关闭照片</button><img id="fullPhoto" alt="学生作业原图"></dialog>
+<script src="./desk.js?v=20261112-p1"></script>
+</body></html>

@@ -264,3 +264,40 @@ CREATE INDEX IF NOT EXISTS exams_teacher_created_idx
 
 CREATE INDEX IF NOT EXISTS ai_grading_history_teacher_idx
   ON ai_grading_history (teacher_account, created_at DESC);
+
+-- P1 desk: additive, opt-in fields; existing crop workflows retain their defaults.
+ALTER TABLE uploaded_images ADD COLUMN IF NOT EXISTS desk_private boolean NOT NULL DEFAULT false;
+ALTER TABLE exams ADD COLUMN IF NOT EXISTS desk_managed boolean NOT NULL DEFAULT false;
+ALTER TABLE exams ADD COLUMN IF NOT EXISTS answer_image_id uuid REFERENCES uploaded_images(id) ON DELETE RESTRICT;
+ALTER TABLE exams ADD COLUMN IF NOT EXISTS answer_total_score numeric;
+ALTER TABLE exams ADD COLUMN IF NOT EXISTS student_order_snapshot jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE exam_questions ADD COLUMN IF NOT EXISTS auto_generated boolean NOT NULL DEFAULT false;
+ALTER TABLE scan_batches ADD COLUMN IF NOT EXISTS desk_managed boolean NOT NULL DEFAULT false;
+ALTER TABLE scan_batches ADD COLUMN IF NOT EXISTS capture_version integer NOT NULL DEFAULT 0;
+ALTER TABLE scan_batches ADD COLUMN IF NOT EXISTS confirmed_version integer;
+ALTER TABLE scan_batches ADD COLUMN IF NOT EXISTS confirmed_page_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE scan_batches ADD COLUMN IF NOT EXISTS grading_started_at timestamptz;
+CREATE UNIQUE INDEX IF NOT EXISTS scan_batches_desk_exam_idx ON scan_batches (exam_id) WHERE desk_managed;
+ALTER TABLE scanned_pages ADD COLUMN IF NOT EXISTS capture_order integer CHECK (capture_order >= 0);
+CREATE UNIQUE INDEX IF NOT EXISTS scanned_pages_capture_order_idx
+  ON scanned_pages (batch_id, capture_order) WHERE capture_order IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS scanned_pages_desk_student_idx
+  ON scanned_pages (batch_id, student_id) WHERE capture_order IS NOT NULL;
+ALTER TABLE grading_jobs ADD COLUMN IF NOT EXISTS scanned_page_id uuid REFERENCES scanned_pages(id) ON DELETE CASCADE;
+ALTER TABLE grading_jobs ADD COLUMN IF NOT EXISTS job_kind varchar(24) NOT NULL DEFAULT 'crop'
+  CHECK (job_kind IN ('crop', 'whole_paper'));
+ALTER TABLE grading_jobs ALTER COLUMN answer_crop_id DROP NOT NULL;
+ALTER TABLE grading_jobs ADD COLUMN IF NOT EXISTS lease_token uuid;
+ALTER TABLE grading_jobs ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz;
+ALTER TABLE grading_jobs ADD COLUMN IF NOT EXISTS overall_feedback jsonb NOT NULL DEFAULT '{}'::jsonb;
+CREATE UNIQUE INDEX IF NOT EXISTS grading_jobs_whole_page_idx
+  ON grading_jobs (scanned_page_id) WHERE job_kind = 'whole_paper';
+CREATE INDEX IF NOT EXISTS grading_jobs_whole_claim_idx
+  ON grading_jobs (status, lease_expires_at, created_at) WHERE job_kind = 'whole_paper';
+ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS confidence numeric CHECK (confidence BETWEEN 0 AND 1);
+ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS needs_review boolean NOT NULL DEFAULT false;
+ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS final_score numeric;
+ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS teacher_comment text NOT NULL DEFAULT '';
+-- One whole-paper job owns several results. Existing crop job uniqueness is subsumed.
+ALTER TABLE grading_results DROP CONSTRAINT IF EXISTS grading_results_job_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS grading_results_job_question_idx ON grading_results (job_id, question_id);

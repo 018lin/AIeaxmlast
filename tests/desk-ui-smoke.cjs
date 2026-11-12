@@ -1,0 +1,100 @@
+// Dependency-free synthetic UI test. Run: node tests/desk-ui-smoke.cjs
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const {spawn} = require('node:child_process');
+const assert = require('node:assert/strict');
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'desk-ui-smoke-'));
+const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--remote-debugging-port=0',`--user-data-dir=${temp}/profile`,'about:blank'], {stdio:['ignore','ignore','pipe']});
+const delay = ms => new Promise(r=>setTimeout(r,ms));
+let ws, seq=0; const pending=new Map(), events=[], checks=[], shots=[];
+function send(method,params={}) {return new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});}
+async function evaluate(expression) {const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
+async function wait(expression) {for(let i=0;i<100;i++){if(await evaluate(expression))return;await delay(50);}throw Error('Timed out: '+expression);}
+async function click(selector) {await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);}
+async function route(hash) {await evaluate(`location.hash=${JSON.stringify(hash)}`);await delay(80);await wait(`!document.querySelector('#app').textContent.includes('正在加载')`);}
+function ok(name,condition=true) {assert.ok(condition,name);checks.push(name);console.log('PASS',name);}
+async function shot(name,width=1440,height=1000) {await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});await delay(80);const r=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});const file=path.join(temp,name+'.png');fs.writeFileSync(file,Buffer.from(r.data,'base64'));shots.push(file);const dimensions=await evaluate(`({width:innerWidth,scroll:document.documentElement.scrollWidth,height:innerHeight,scrollHeight:document.documentElement.scrollHeight})`);console.log('SCREEN',file,dimensions);return dimensions;}
+function fixtures() {
+ if(location.pathname!='/desk.html')return;
+ if(!sessionStorage.getItem('fixture-seeded')) {localStorage.setItem('aihw.auth.session.v1',JSON.stringify({account:'synthetic',name:'测试教师',token:'fixture-not-real',expiresAt:Date.now()+3600000}));sessionStorage.setItem('fixture-seeded','1');}
+ const canvas=document.createElement('canvas');canvas.width=600;canvas.height=800;const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,600,800);ctx.fillStyle='black';ctx.font='28px sans-serif';ctx.fillText('SYNTHETIC TEST ONLY',40,70);ctx.fillText('1. A  2. B  3. C',40,130);
+ const image=canvas.toDataURL('image/png');
+ const d={exam:{id:'e1',name:'合成练习',className:'测试班'},batch:{status:'draft'},students:[{id:'s1',studentNo:'001',name:'测试甲'},{id:'s2',studentNo:'002',name:'测试乙'},{id:'s3',studentNo:'003',name:'测试丙'}],pages:[],questions:[1,2,3].map(n=>({id:'q'+n,questionNo:String(n),title:'合成题 '+n,maxScore:5})),results:[]};
+ const f=window.fixture={d,image,log:[],empty:false,noClasses:false,fail:'',failStatus:500,hold:'',release:null};
+ navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('Synthetic denied camera','NotAllowedError');};
+ const original=window.fetch;
+ window.fetch=async(url,opt={})=>{
+  const u=new URL(url,location.href);if(!u.pathname.startsWith('/api/'))return original(url,opt);
+  if(u.pathname!='/api/mvp')throw Error('Blocked non-fixture API '+u.pathname);
+  const action=u.searchParams.get('action'),body=opt.body?JSON.parse(opt.body):null;f.log.push({action,body,auth:new Headers(opt.headers).get('Authorization')});
+  if(f.hold===action)await new Promise(r=>f.release=r);
+  if(f.fail===action){f.fail='';return new Response(JSON.stringify({message:'合成请求失败'}),{status:f.failStatus});}
+  let result={ok:true};
+  if(action==='bootstrap')result={classes:f.noClasses?[]:[{id:'c1',name:'测试班'}]};
+  else if(action==='desk-list')result={assignments:f.empty?[]:[{id:'e1',name:d.exam.name,className:'测试班',examDate:'2026-11-12',status:d.batch.status,capturedCount:d.pages.length,studentCount:3,doneCount:d.pages.filter(p=>p.status==='done').length}]};
+  else if(action==='desk-detail')result=u.searchParams.get('examId')==='e2'?{...d,exam:{...d.exam,id:'e2',name:'另一份合成练习'}}:d;
+  else if(action==='desk-create'){d.exam.name=body.name;result={examId:'e1'};}
+  else if(action==='desk-image')result={image};
+  else if(action==='desk-capture'){d.pages=d.pages.filter(p=>p.studentId!==body.studentId);d.pages.push({id:'p'+body.studentId,studentId:body.studentId,status:'ready',captureOrder:body.captureOrder});}
+  else if(action==='desk-questions')d.questions=body.questions;
+  else if(action==='desk-confirm')d.batch.status='confirmed';
+  else if(action==='desk-start'){d.batch.status='done';d.pages.forEach(p=>p.status='done');d.results=d.pages.flatMap(p=>d.questions.map(q=>({...q,studentId:p.studentId,score:4,maxScore:q.maxScore,needsReview:true,analysis:'合成评语',suggestions:['合成建议'],knowledgePoints:['合成知识']})));}
+  else if(action==='desk-retry')d.batch.status='grading';
+  else throw Error('Unhandled fixture '+action);
+  return new Response(JSON.stringify(result),{status:200,headers:{'Content-Type':'application/json'}});
+ };
+ window.syntheticUpload=async (id,openGallery=true)=>{if(id==='photoFile' && openGallery)document.querySelector('[data-action=gallery]').click();const blob=await (await original(image)).blob();const dt=new DataTransfer();dt.items.add(new File([blob],'synthetic.png',{type:'image/png'}));const el=document.getElementById(id);el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));};
+}
+(async()=>{
+ try {
+ const endpoint=await new Promise((resolve,reject)=>{let text='';chrome.stderr.on('data',b=>{text+=b;const m=text.match(/DevTools listening on (ws:\/\/[^\s]+)/);if(m)resolve(m[1]);});chrome.on('error',reject);setTimeout(()=>reject(Error('Chrome launch timeout')),15000).unref();});
+ const port=new URL(endpoint).port;const targets=await(await fetch(`http://127.0.0.1:${port}/json/list`)).json();ws=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);ws.onmessage=ev=>{const m=JSON.parse(ev.data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(Error(JSON.stringify(m.error))):p.resolve(m.result);}else events.push(m);};
+ await send('Page.enable');await send('Runtime.enable');await send('Log.enable');await send('Page.addScriptToEvaluateOnNewDocument',{source:`(${fixtures.toString()})()`});await send('Page.navigate',{url:'http://localhost:8081/desk.html#list'});await wait(`!!document.querySelector('.assignment')`);
+ ok('Authenticated fixture list',await evaluate(`fixture.log[0].auth==='Bearer fixture-not-real'`));await shot('desktop-list');
+ await route('#new');await shot('mobile390-new',390,844);await shot('mobile360-new',360,800);
+ await evaluate(`document.querySelector('[name=name]').value='合成练习';syntheticUpload('answerFile')`);await wait(`!document.querySelector('#answerPreview').hidden && !document.querySelector('[type=submit]').disabled`);await click('[type=submit]');await wait(`location.hash==='#capture/e1' && !!document.querySelector('.camera')`);
+ ok('Answer image submitted',await evaluate(`fixture.log.find(x=>x.action==='desk-create').body.answerImage.startsWith('data:image/jpeg')`));await shot('mobile390-camera',390,844);
+ await click('[data-action=gallery]');await evaluate(`syntheticUpload('photoFile')`);await wait(`location.hash==='#capture/e1/s2' && document.querySelector('h1').textContent==='测试乙'`);
+ await click('[data-action=skip]');await wait(`document.querySelector('h1').textContent==='测试丙'`);
+ await evaluate(`fixture.fail='desk-capture';syntheticUpload('photoFile')`);await wait(`document.querySelector('#notice').textContent==='合成请求失败'`);ok('Failed upload stays on same student',await evaluate(`location.hash==='#capture/e1/s3' && fixture.d.pages.length===1 && !document.querySelector('[data-action=gallery]').disabled`));const error390=await shot('mobile390-upload-error',390,844);const error360=await shot('mobile360-upload-error',360,800);ok('Mobile upload error fits viewport at 390 and 360',error390.scrollHeight<=error390.height && error360.scrollHeight<=error360.height);
+ await evaluate(`syntheticUpload('photoFile')`);await wait(`!!document.querySelector('.question-editor')`);ok('Skip preserves student association',await evaluate(`JSON.stringify(fixture.d.pages.map(p=>[p.studentId,p.captureOrder]))==='[["s1",0],["s3",2]]'`));
+ await click('[data-action=capture-one][data-student=s1]');await wait(`!!document.querySelector('.camera')`);await evaluate(`syntheticUpload('photoFile')`);await wait(`!!document.querySelector('.question-editor')`);ok('Replacement overwrites only intended student',await evaluate(`fixture.d.pages.length===2 && fixture.log.filter(x=>x.action==='desk-capture').at(-1).body.replacement===true`));
+ await click('.question-editor summary');await shot('desktop-review',1440,1000);await shot('mobile390-review',390,844);await shot('mobile360-review',360,800);
+ await click('[data-action=delete-question]');await click('[data-action=start]');await wait(`document.querySelector('#notice').textContent.includes('请先保存')`);ok('Delete marks dirty and blocks start',await evaluate(`!fixture.log.some(x=>x.action==='desk-confirm')`));
+ await evaluate(`document.querySelectorAll('.question-row [type=checkbox]').forEach(e=>e.click())`);await click('[data-action=merge]');ok('Merge retains numbers and summed score',await evaluate(`document.querySelectorAll('.question-row').length===1 && document.querySelector('[name=questionNo]').value==='2+3' && document.querySelector('[name=maxScore]').value==='10'`));await click('[data-action=start]');ok('Merge dirty blocks start',await evaluate(`!fixture.log.some(x=>x.action==='desk-start')`));
+ await evaluate(`document.querySelector('#questionForm').requestSubmit()`);await wait(`document.querySelector('#notice').textContent.includes('题目调整已保存')`);await click('[data-action=start]');await wait(`location.hash==='#results/e1' && !!document.querySelector('.score')`);ok('Save then confirm then start',await evaluate(`fixture.log.filter(x=>['desk-questions','desk-confirm','desk-start'].includes(x.action)).map(x=>x.action).join(',')==='desk-questions,desk-confirm,desk-start'`));await shot('desktop-results',1440,1000);await shot('mobile360-results',360,800);
+ await route('#student/e1/s1');await wait(`!!document.querySelector('.result-question')`);ok('Student score, review, comments rendered',await evaluate(`document.querySelector('#app').textContent.includes('合成评语') && document.querySelector('.badge').textContent==='待复核'`));await shot('mobile390-student',390,844);await click('[data-action=photo]');await wait(`document.querySelector('dialog').open`);await shot('mobile360-photo',360,800);await click('#closePhoto');ok('Photo modal opens and closes',await evaluate(`!document.querySelector('dialog').open`));
+ await route('#student/e1/s2');ok('Student empty results',await evaluate(`document.querySelector('#app').textContent.includes('还没有批改结果')`));
+ await evaluate(`fixture.empty=true`);await route('#list');ok('Empty list',await evaluate(`document.querySelector('#app').textContent.includes('还没有作业')`));await shot('desktop-empty',1440,1000);
+ await evaluate(`fixture.noClasses=true`);await route('#new');ok('No classes empty state',await evaluate(`document.querySelector('#app').textContent.includes('先准备一份班级名单')`));
+ await evaluate(`fixture.fail='desk-detail'`);await route('#results/e1');ok('Load error recovery UI',await evaluate(`document.querySelector('#app').textContent.includes('加载失败')`));await shot('mobile390-load-error',390,844);await click('[data-action=refresh]');await wait(`!!document.querySelector('.roster')`);ok('Refresh recovers');
+ // Reject a callback from the picker opened for A after navigating to B.
+ await evaluate(`fixture.d.batch.status='draft'`);await route('#capture/e1/s1');await click('[data-action=gallery]');
+ const beforeStale=await evaluate(`fixture.log.filter(x=>x.action==='desk-capture').length`);
+ await route('#capture/e1/s2');await evaluate(`syntheticUpload('photoFile',false)`);await wait(`document.querySelector('#notice').textContent.includes('拍照位置已切换')`);await delay(150);
+ ok('Stale picker callback makes no capture API call',await evaluate(`fixture.log.filter(x=>x.action==='desk-capture').length===${beforeStale} && location.hash==='#capture/e1/s2' && document.querySelector('h1').textContent==='测试乙'`));
+ // Queue hash navigation while the synthetic upload request is held.
+ await evaluate(`fixture.hold='desk-capture';syntheticUpload('photoFile')`);await wait(`!!fixture.release`);await evaluate(`location.hash='#review/e1'`);await delay(80);
+ assert.equal(await evaluate(`document.querySelector('h1').textContent`),'测试乙');
+ await evaluate(`fixture.hold='';fixture.release()`);await wait(`location.hash==='#review/e1' && !!document.querySelector('.question-editor')`);
+ ok('Busy navigation honors queued review destination',await evaluate(`fixture.log.filter(x=>x.action==='desk-capture').at(-1).body.studentId==='s2'`));
+ await click('.question-editor summary');await click('[data-action=merge]');
+ assert.equal(await evaluate(`document.querySelector('#questionForm').dataset.dirty`),'false');
+ await click('.question-row [type=checkbox]');assert.equal(await evaluate(`document.querySelector('#questionForm').dataset.dirty`),'false');await click('[data-action=merge]');
+ ok('Selection and zero/one-row merge do not mark dirty',await evaluate(`document.querySelector('#questionForm').dataset.dirty==='false' && document.querySelectorAll('.question-row').length===1 && document.querySelector('[name=maxScore]').value==='10'`));
+ await click('[data-action=start]');await wait(`location.hash==='#results/e1' && !!document.querySelector('.score')`);ok('No-op merge does not block start');
+ await evaluate(`fixture.d.batch.status='draft'`);await route('#review/e1');await click('.question-editor summary');
+ await evaluate(`document.querySelector('[name=maxScore]').value='99';document.querySelector('[name=maxScore]').dispatchEvent(new Event('input',{bubbles:true}))`);
+ await route('#results/e1');await route('#review/e2');ok('Question drafts are isolated per exam',await evaluate(`document.querySelector('[name=maxScore]').value==='10' && document.querySelector('#questionForm').dataset.dirty==='false'`));await route('#list');await route('#capture/e1/s1');await route('#review/e1');
+ ok('Dirty draft retained across routes until save',await evaluate(`document.querySelector('[name=maxScore]').value==='99' && document.querySelector('#questionForm').dataset.dirty==='true' && fixture.d.questions[0].maxScore===10`));
+ const beforeDirty=await evaluate(`fixture.log.filter(x=>['desk-confirm','desk-start'].includes(x.action)).length`);await click('[data-action=start]');await wait(`document.querySelector('#notice').textContent.includes('请先保存')`);
+ ok('Retained dirty draft still blocks grading',await evaluate(`fixture.log.filter(x=>['desk-confirm','desk-start'].includes(x.action)).length===${beforeDirty}`));
+ // Save normally before logout; do not disable beforeunload guards.
+ await evaluate(`document.querySelector('#questionForm').requestSubmit()`);await wait(`document.querySelector('#notice').textContent.includes('题目调整已保存')`);await route('#results/e1');await route('#review/e1');
+ ok('Saving persists draft and clears dirty state',await evaluate(`fixture.d.questions[0].maxScore===99 && document.querySelector('[name=maxScore]').value==='99' && document.querySelector('#questionForm').dataset.dirty==='false'`));
+ await route('#list');await click('.teacher-menu summary');await click('[data-action=logout]');await wait(`location.pathname==='/index.html'`);ok('Logout clears session and redirects',await evaluate(`localStorage.getItem('aihw.auth.session.v1')===null`));await send('Page.navigate',{url:'http://localhost:8081/desk.html#student/e1/s1'});await wait(`location.pathname==='/index.html'`);ok('Unauthenticated desk redirects');
+ ok('Auth redirect preserves and resolves desk deep link',await evaluate(`new URLSearchParams(location.search).get('next')==='desk.html#student/e1/s1' && AppAuth.resolveNextPage(new URLSearchParams(location.search).get('next'))==='./desk.html#student/e1/s1'`));
+ const errors=events.filter(e=>e.method==='Runtime.exceptionThrown'||e.method==='Log.entryAdded'&&e.params.entry.level==='error'||e.method==='Runtime.consoleAPICalled'&&e.params.type==='error');console.log('CONSOLE_ERRORS',JSON.stringify(errors));console.log('SUMMARY',JSON.stringify({checks:checks.length,shots,temp},null,2));
+ } finally {if(ws)ws.close();chrome.kill();}
+})().catch(e=>{console.error(e);process.exitCode=1;});
