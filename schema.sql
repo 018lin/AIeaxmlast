@@ -306,3 +306,23 @@ CREATE TABLE IF NOT EXISTS worker_heartbeats (
   name text PRIMARY KEY,
   last_seen_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- 批改模式：fast 高效模式（单次评判）/ fine 精批模式（双评 + 争议仲裁）。
+-- 模式存在教师账户上作为默认值，并在“开始批改”时快照进 grading_jobs，
+-- 之后改偏好不会影响已开始或已完成的批次。
+CREATE TABLE IF NOT EXISTS teacher_settings (
+  account text PRIMARY KEY,
+  grading_mode varchar(16) NOT NULL DEFAULT 'fast' CHECK (grading_mode IN ('fast', 'fine')),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE grading_jobs ADD COLUMN IF NOT EXISTS grading_mode varchar(16) NOT NULL DEFAULT 'fast'
+  CHECK (grading_mode IN ('fast', 'fine'));
+
+-- single 单次评判 / agree 两次一致 / arbitrated 已仲裁 / disputed 仲裁仍不确定。
+ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS agreement varchar(16) NOT NULL DEFAULT 'single';
+-- 两次独立评判与仲裁的原始结论，供详情页展示“为什么有争议”，也为后续校准阈值留数据。
+ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS passes jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+CREATE INDEX IF NOT EXISTS grading_jobs_batch_mode_idx
+  ON grading_jobs (batch_id, grading_mode);

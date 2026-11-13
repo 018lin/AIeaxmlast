@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { gradeWholePaper, recognizeAnswerQuestions, sanitizePaperBoxes, validateWholePaperResult, validateDeskQuestions } = require("../lib/ai-grader");
+const { gradeWholePaper, recognizeAnswerQuestions, sanitizePaperBoxes, validateWholePaperResult, validateDeskQuestions, diffPasses } = require("../lib/ai-grader");
 
 const expected = (count) => Array.from({ length: count }, (_, i) => ({ questionNo: String(i + 1), title: "Test", maxScore: 5 }));
 const resultFor = (questions) => ({ questions: questions.map((q) => ({ question_no: q.questionNo, max_score: q.maxScore, score: 3, confidence: 0.9, analysis: "Feedback" })) });
@@ -384,4 +384,92 @@ test("cancellation prevents subsequent provider requests", async (t) => {
   controller.abort();
   await assert.rejects(gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(1), signal: controller.signal }), { statusCode: 504 });
   assert.equal(calls.length, 0);
+});
+
+// ---------- 精批模式：双评 + 争议仲裁 ----------
+
+const entryMap = (entries) => new Map(entries.map(([no, score, extra]) => [no, {
+  question_no: no, score, confidence: 0.9, needs_review: false, analysis: "", deductions: [], suggestions: [], knowledge_points: [], bbox: null, ...extra,
+}]));
+const passReply = (pairs, maxScore = 5) => ({ questions: pairs.map(([no, score]) => ({
+  question_no: no, max_score: maxScore, score, confidence: 0.9, needs_review: false, analysis: "反馈",
+})) });
+
+test("diffPasses only escalates gaps that matter at the question's own weight", () => {
+  const list = [{ questionNo: "1", maxScore: 5 }, { questionNo: "2", maxScore: 10 }, { questionNo: "3", maxScore: 5 }, { questionNo: "4", maxScore: 5 }];
+  const passA = entryMap([["1", 4], ["2", 8], ["3", 5], ["4", 3]]);
+  const passB = entryMap([["1", 3], ["2", 7], ["3", 5], ["4", 3]]);
+  const { agree, disputes } = diffPasses(list, passA, passB);
+  // 5 分题差 1 分是 20%；10 分题差 1 分只是 10%，不触发第三次介入。
+  assert.deepEqual(disputes.map((item) => [item.questionNo, item.reason]), [["1", "score"]]);
+  assert.deepEqual(agree.map((item) => item.questionNo), ["2", "3", "4"]);
+  assert.equal(agree[0].weakConflict, true);
+  assert.equal(agree[1].weakConflict, false);
+});
+
+test("diffPasses escalates unscored, missing and low-confidence passes", () => {
+  const list = [{ questionNo: "1", maxScore: 5 }, { questionNo: "2", maxScore: 5 }, { questionNo: "3", maxScore: 5 },
+    { questionNo: "4", maxScore: 5 }, { questionNo: "5", maxScore: 5 }];
+  const passA = entryMap([["1", null], ["2", 4], ["3", 4], ["4", 4, { deductions: ["漏单位"] }], ["5", 3]]);
+  const passB = new Map([
+    ["1", { score: 4, confidence: 0.9, needs_review: false, deductions: [] }],
+    ["2", { score: 4, confidence: 0.9, needs_review: false, deductions: [] }],
+    ["3", { score: 4, confidence: 0.4, needs_review: false, deductions: [] }],
+    ["4", { score: 4, confidence: 0.9, needs_review: false, deductions: ["计算错误"] }],
+  ]);
+  const { agree, disputes } = diffPasses(list, passA, passB);
+  assert.deepEqual(disputes.map((item) => [item.questionNo, item.reason]),
+    [["1", "unscored"], ["3", "unsure"], ["5", "missing"]]);
+  assert.deepEqual(agree.map((item) => [item.questionNo, item.weakConflict]), [["2", false], ["4", true]]);
+});
+
+test("fine mode arbitrates only the questions the two passes disagree on", async (t) => {
+  const calls = mockProvider(t, (body) => {
+    const text = body.messages[0].content[0].text;
+    if (text.includes("教研组长")) {
+      return { reviews: [{ question_no: "2", student_answer: "12", key_points: ["列出步骤"], my_score: 4, chosen_score: 4, reason: "步骤完整", confidence: 0.9, needs_review: false }] };
+    }
+    const group = JSON.parse(text.split("\n")[2]);
+    const scores = body.temperature === 0 ? [5, 4, 4] : [5, 3, 4];
+    return passReply(group.map((q) => [q.questionNo, scores[Number(q.questionNo) - 1]]));
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(3), gradingMode: "fine" });
+  assert.deepEqual(graded.result.questions.map((q) => [q.score, q.agreement, q.needs_review]),
+    [[5, "agree", false], [4, "arbitrated", false], [4, "agree", false]]);
+  assert.equal(graded.result.questions[0].passes.length, 2);
+  assert.equal(graded.result.questions[1].passes.length, 3);
+  assert.match(graded.result.overall_analysis, /1 题两次评判不一致/);
+  assert.match(graded.result.overall_analysis, /1 题已复核确认/);
+  assert.equal(calls.filter((body) => body.temperature === 0.5).length, 1);
+  assert.equal(calls.filter((body) => /教研组长/.test(body.messages[0].content[0].text)).length, 1);
+});
+
+test("fine mode keeps agreeing questions when the second pass fails outright", async (t) => {
+  mockProvider(t, (body) => (body.temperature === 0.5
+    ? { fail: { status: 500, message: "provider down" } }
+    : passReply([["1", 4], ["2", 5]])));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2), gradingMode: "fine" });
+  assert.deepEqual(graded.result.questions.map((q) => [q.score, q.agreement]), [[4, "single"], [5, "single"]]);
+  assert.match(graded.result.overall_analysis, /第二次评判失败/);
+});
+
+test("a failed arbitration leaves disputes for the teacher instead of silently keeping one score", async (t) => {
+  mockProvider(t, (body) => {
+    if (/教研组长/.test(body.messages[0].content[0].text)) return { fail: { status: 500, message: "arbiter down" } };
+    return body.temperature === 0 ? passReply([["1", 5], ["2", 3]]) : passReply([["1", 5], ["2", 5]]);
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2), gradingMode: "fine" });
+  const [first, second] = graded.result.questions;
+  assert.equal(first.agreement, "agree");
+  assert.equal(second.agreement, "disputed");
+  assert.equal(second.needs_review, true);
+  assert.equal(second.score, null);
+  assert.match(second.analysis, /两次 AI 评判不一致/);
+});
+
+test("fast mode never issues a second pass or an arbitration", async (t) => {
+  const calls = mockProvider(t, () => passReply([["1", 4], ["2", 5]]));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2), gradingMode: "fast" });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(graded.result.questions.map((q) => q.agreement), ["single", "single"]);
 });

@@ -17,9 +17,20 @@ async function request(action, { db = {}, method = "POST", payload = {}, account
 }
 
 test("authentication is required before any desk operation", async () => {
-  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-answer-image", "desk-create", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions", "desk-result"]) {
+  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-answer-image", "desk-mode", "desk-create", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions", "desk-result"]) {
     assert.equal((await request(action, { account: "" })).status, 401);
   }
+});
+
+test("grading mode is readable and writable per teacher", async () => {
+  const read = await request("desk-mode", { method: "GET", db: {
+    getTeacherSettings: async (account) => { assert.equal(account, "teacher-A"); return { gradingMode: "fine", modes: [] }; },
+  } });
+  assert.deepEqual(read, { status: 200, body: { gradingMode: "fine", modes: [] } });
+  const written = await request("desk-mode", { payload: { gradingMode: "fine" }, db: {
+    setTeacherSettings: async (value, account) => { assert.deepEqual(value, { gradingMode: "fine" }); assert.equal(account, "teacher-A"); return { gradingMode: "fine" }; },
+  } });
+  assert.deepEqual(written, { status: 200, body: { gradingMode: "fine" } });
 });
 
 test("desk GET contract is passed through with the authenticated tenant", async () => {

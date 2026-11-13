@@ -4,7 +4,7 @@ const { randomUUID } = require("crypto");
 const { Pool } = require("pg");
 const sharp = require("sharp");
 const XLSX = require("xlsx");
-const { validateDeskQuestions, validateWholePaperResult, sanitizePaperBoxes } = require("./lib/ai-grader");
+const { validateDeskQuestions, validateWholePaperResult, sanitizePaperBoxes, normalizeGradingMode } = require("./lib/ai-grader");
 const { analyzeAnswerLayout, alignBoxes } = require("./lib/answer-layout");
 
 const MASTERY_MASTERED = 0.85;
@@ -3523,6 +3523,26 @@ function deskAccount(account) {
   return account.trim();
 }
 
+// 模式描述只在这里定义一次，前端直接渲染，避免两处文案走偏。
+const GRADING_MODES = [
+  { value: "fast", label: "高效模式", note: "每份作业评判一次，速度快。" },
+  { value: "fine", label: "精批模式", note: "同一份作业独立评判两次，不一致的题目再由第三次复核，耗时约两倍。" },
+];
+
+async function getTeacherSettings(account) {
+  const result = await getPool().query("SELECT grading_mode FROM teacher_settings WHERE account = $1", [deskAccount(account)]);
+  return { gradingMode: normalizeGradingMode(result.rows[0]?.grading_mode), modes: GRADING_MODES };
+}
+
+async function setTeacherSettings(payload, account) {
+  const owner = deskAccount(account);
+  const mode = String(payload?.gradingMode ?? payload?.mode ?? "").trim();
+  if (!GRADING_MODES.some((item) => item.value === mode)) throw deskError("批改模式只能是 fast 或 fine。", 400);
+  await getPool().query(`INSERT INTO teacher_settings (account, grading_mode, updated_at) VALUES ($1, $2, now())
+    ON CONFLICT (account) DO UPDATE SET grading_mode = EXCLUDED.grading_mode, updated_at = now()`, [owner, mode]);
+  return { gradingMode: mode, modes: GRADING_MODES };
+}
+
 async function deskTransaction(work, readOnly = false) {
   const client = await getPool().connect();
   try {
@@ -3730,13 +3750,17 @@ async function startDeskGrading(payload, account) {
     }
     const questions = await client.query('SELECT question_no AS "questionNo", title, max_score FROM exam_questions WHERE exam_id = $1', [record.exam_id]);
     validateDeskQuestions(questions.rows.map((q) => ({ ...q, maxScore: Number(q.max_score) })));
+    // 模式在这里快照进每个任务：之后教师改偏好，不会改变已开始批改的批次。
+    const requested = payload?.gradingMode ?? payload?.mode;
+    const stored = requested ? null : (await client.query("SELECT grading_mode FROM teacher_settings WHERE account = $1", [deskAccount(account)])).rows[0]?.grading_mode;
+    const mode = normalizeGradingMode(requested ?? stored);
     for (const page of pages.rows) {
-      await client.query(`INSERT INTO grading_jobs (id, batch_id, scanned_page_id, job_kind)
-        VALUES ($1, $2, $3, 'whole_paper') ON CONFLICT (scanned_page_id) WHERE job_kind = 'whole_paper' DO NOTHING`,
-      [randomUUID(), record.batch_id, page.id]);
+      await client.query(`INSERT INTO grading_jobs (id, batch_id, scanned_page_id, job_kind, grading_mode)
+        VALUES ($1, $2, $3, 'whole_paper', $4) ON CONFLICT (scanned_page_id) WHERE job_kind = 'whole_paper' DO NOTHING`,
+      [randomUUID(), record.batch_id, page.id, mode]);
     }
     await client.query("UPDATE scan_batches SET status = 'grading', grading_started_at = now() WHERE id = $1", [record.batch_id]);
-    return {};
+    return { gradingMode: mode };
   });
 }
 
@@ -3770,7 +3794,9 @@ async function listDeskAssignments(account) {
     LEFT JOIN classes c ON c.id = e.class_id
     WHERE e.teacher_account = $1 AND e.desk_managed ORDER BY e.created_at DESC
   `, [deskAccount(account)]);
-  return { assignments: result.rows.map((r) => ({
+  const settings = await getPool().query("SELECT grading_mode FROM teacher_settings WHERE account = $1", [deskAccount(account)]);
+  return { gradingMode: normalizeGradingMode(settings.rows[0]?.grading_mode), modes: GRADING_MODES,
+    assignments: result.rows.map((r) => ({
     id: r.id, name: r.name, className: r.class_name || "", examDate: r.exam_date,
     batchId: r.batch_id, status: r.status, studentCount: Number(r.student_count),
     capturedCount: Number(r.captured_count), doneCount: Number(r.done_count), reviewCount: Number(r.review_count),
@@ -3802,7 +3828,8 @@ async function getDeskDetail(examId, account) {
       return { id: r.id, studentId: r.student_id, questionNo: r.question_no,
         score: score === null || score === undefined ? null : Number(score), maxScore: Number(r.max_score), analysis: r.analysis,
         suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review,
-        reviewed: r.reviewed, teacherComment: r.teacher_comment || "", bbox: deskResultBBox(r.ai_result?.bbox) };
+        reviewed: r.reviewed, teacherComment: r.teacher_comment || "", bbox: deskResultBBox(r.ai_result?.bbox),
+        agreement: r.agreement || "single", passes: asJsonArray(r.passes) };
     });
     const safeByStudent = new Map();
     for (const result of mappedResults) {
@@ -3953,7 +3980,7 @@ async function renewWholePaperLease(job) {
 }
 
 async function getWholePaperJobPayload(job) {
-  const result = await getPool().query(`SELECT e.name, e.id AS exam_id, p.student_id,
+  const result = await getPool().query(`SELECT e.name, e.id AS exam_id, p.student_id, j.grading_mode,
     answer.mime_type AS answer_mime, answer.image_data AS answer_data,
     student.mime_type AS student_mime, student.image_data AS student_data
     FROM grading_jobs j JOIN scan_batches b ON b.id = j.batch_id AND b.desk_managed
@@ -3965,7 +3992,7 @@ async function getWholePaperJobPayload(job) {
   if (!result.rowCount) throw deskError("任务租约已失效或图片不存在。", 409);
   const row = result.rows[0];
   const questions = await listExamQuestions(row.exam_id);
-  return { examName: row.name, expectedQuestions: questions,
+  return { examName: row.name, expectedQuestions: questions, gradingMode: normalizeGradingMode(row.grading_mode),
     teacherAnswerImage: bufferToDataUrl(row.answer_mime, row.answer_data),
     studentImage: bufferToDataUrl(row.student_mime, row.student_data) };
 }
@@ -3989,17 +4016,26 @@ async function completeWholePaperJob(job, grade) {
     const resultQuestions = sanitizePaperBoxes(result.questions);
     const questionMap = new Map(questions.map((q) => [q.questionNo, q.id]));
     for (const item of resultQuestions) {
+      // passes 单独落列，不再混进 ai_result，避免同一份数据存两遍。
+      const { passes, ...aiResult } = item;
       await client.query(`INSERT INTO grading_results
         (id, job_id, batch_id, exam_id, student_id, question_id, score, max_score, analysis,
-         suggestions, deductions, ai_result, confidence, needs_review)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14)
+         suggestions, deductions, ai_result, confidence, needs_review, agreement, passes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14, $15, $16::jsonb)
         ON CONFLICT (job_id, question_id) DO NOTHING`, [randomUUID(), job.id, job.batchId, row.exam_id, row.student_id,
         questionMap.get(item.question_no), item.score, item.max_score, item.analysis,
-        JSON.stringify(item.suggestions), JSON.stringify(item.deductions), JSON.stringify(item), item.confidence, item.needs_review]);
+        JSON.stringify(item.suggestions), JSON.stringify(item.deductions), JSON.stringify(aiResult),
+        item.confidence, item.needs_review, item.agreement || "single",
+        JSON.stringify(Array.isArray(passes) ? passes : [])]);
     }
+    const summary = resultQuestions.reduce((acc, item) => {
+      acc[item.agreement || "single"] = (acc[item.agreement || "single"] || 0) + 1;
+      return acc;
+    }, {});
     await client.query(`UPDATE grading_jobs SET status = 'done', finished_at = now(), error = '',
       lease_token = NULL, lease_expires_at = NULL, overall_feedback = $2::jsonb WHERE id = $1`, [job.id, JSON.stringify({
       analysis: result.overall_analysis, suggestions: result.overall_suggestions, model: grade.model || "",
+      mode: normalizeGradingMode(grade.gradingMode), agreement: summary,
     })]);
     await settleDeskBatch(client, job.batchId);
     return true;
@@ -4019,6 +4055,7 @@ async function failWholePaperJob(job, message) {
 module.exports = {
   createDeskExam, captureDeskPage, confirmDeskPages, updateDeskQuestions, updateDeskResult, startDeskGrading, retryDeskGrading,
   listDeskAssignments, getDeskDetail, getDeskImage, getDeskAnswerImage, assertLegacyMutationAllowed,
+  getTeacherSettings, setTeacherSettings,
   recoverWholePaperJobs, claimWholePaperJob, renewWholePaperLease, getWholePaperJobPayload,
   completeWholePaperJob, failWholePaperJob, touchWorkerHeartbeat, isWorkerHeartbeatFresh,
   assertBatchOwnership,

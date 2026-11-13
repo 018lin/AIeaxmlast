@@ -166,15 +166,27 @@ test("unconfirmed or stale version cannot enqueue", async () => {
   }
 });
 
-test("start enqueues a single whole-page job and commits immutable grading start", async () => {
+test("start enqueues a single whole-page job using the teacher's saved mode", async () => {
   const mock = loadDb([
     recordStep(record({ confirmed_version: 2, confirmed_page_ids: [pageId] })), rowStep(/SELECT id FROM scanned_pages/, [{ id: pageId }]),
     rowStep(/SELECT question_no AS/, [{ questionNo: "1", title: "Q", max_score: "5" }]),
-    { match: /INSERT INTO grading_jobs.*'whole_paper'.*ON CONFLICT/, run: (v) => { assert.equal(v[2], pageId); return []; } },
+    rowStep(/SELECT grading_mode FROM teacher_settings/, [{ grading_mode: "fine" }]),
+    { match: /INSERT INTO grading_jobs.*'whole_paper'.*ON CONFLICT/, run: (v) => { assert.equal(v[2], pageId); assert.equal(v[3], "fine"); return []; } },
     rowStep(/grading_started_at = now\(\)/),
   ]);
-  assert.deepEqual(await mock.db.startDeskGrading({ examId }, "teacher-A"), {});
+  assert.deepEqual(await mock.db.startDeskGrading({ examId }, "teacher-A"), { gradingMode: "fine" });
   assert.equal(mock.queries.at(-1).sql, "COMMIT"); mock.check();
+});
+
+test("start honours an explicit mode without reading the saved default", async () => {
+  const mock = loadDb([
+    recordStep(record({ confirmed_version: 2, confirmed_page_ids: [pageId] })), rowStep(/SELECT id FROM scanned_pages/, [{ id: pageId }]),
+    rowStep(/SELECT question_no AS/, [{ questionNo: "1", title: "Q", max_score: "5" }]),
+    { match: /INSERT INTO grading_jobs.*'whole_paper'.*ON CONFLICT/, run: (v) => { assert.equal(v[3], "fast"); return []; } },
+    rowStep(/grading_started_at = now\(\)/),
+  ]);
+  assert.deepEqual(await mock.db.startDeskGrading({ examId, gradingMode: "fast" }, "teacher-A"), { gradingMode: "fast" });
+  assert.ok(!mock.queries.some((q) => /teacher_settings/.test(q.sql))); mock.check();
 });
 
 test("repeated start after grading or failure is idempotent", async () => {
@@ -258,8 +270,11 @@ test("list contract uses snapshot counts, finished student averages and numeric 
   const mock = loadDb([{ match: /jsonb_array_length\(e.student_order_snapshot\).*e.teacher_account = \$1/, run: (v, sql) => {
     assert.equal(v[0], "teacher-A"); assert.match(sql, /COUNT\(\*\) FROM grading_results r WHERE r.batch_id = b.id AND r.needs_review\) AS review_count/);
     return [{ id: examId, name: "Test", class_name: "Class", exam_date: "2026-01-01", batch_id: batchId, status: "grading", student_count: "10", captured_count: "5", done_count: "3", review_count: "2", average_score: "8.5" }];
-  } }]);
-  const { assignments: [item] } = await mock.db.listDeskAssignments("teacher-A");
+  } }, rowStep(/SELECT grading_mode FROM teacher_settings/, [{ grading_mode: "fine" }])]);
+  const result = await mock.db.listDeskAssignments("teacher-A");
+  assert.equal(result.gradingMode, "fine");
+  assert.deepEqual(result.modes.map((item) => item.value), ["fast", "fine"]);
+  const [item] = result.assignments;
   assert.deepEqual(item, { id: examId, name: "Test", className: "Class", examDate: "2026-01-01", batchId, status: "grading", studentCount: 10, capturedCount: 5, doneCount: 3, reviewCount: 2, averageScore: 8.5 }); mock.check();
 });
 
@@ -382,7 +397,7 @@ test("desk detail is a consistent metadata-only snapshot with short result field
   assert.deepEqual(Object.keys(detail), ["exam", "batch", "students", "pages", "questions", "results"]);
   assert.deepEqual(detail.students, record().student_order_snapshot);
   assert.deepEqual(detail.pages[0], { id: pageId, studentId, captureOrder: 0, status: "done", error: "" });
-  assert.deepEqual(detail.results[0], { id: id(20), studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, reviewed: false, teacherComment: "", bbox: [0.1, 0.2, 0.3, 0.4] });
+  assert.deepEqual(detail.results[0], { id: id(20), studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, reviewed: false, teacherComment: "", bbox: [0.1, 0.2, 0.3, 0.4], agreement: "single", passes: [] });
   assert.equal(mock.queries[0].sql, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"); mock.check();
 });
 

@@ -143,3 +143,6 @@ vite.config.ts.timestamp-*
 .vite/
 .vercel
 .env*
+
+# WorkBuddy 本地项目数据（记忆、截图），不随仓库分发
+.workbuddy/

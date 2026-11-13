@@ -6,7 +6,7 @@
   if (!session) return;
   document.querySelector('#teacherName').textContent = `${session.name || session.account} · 菜单`;
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const state = { detail: null, stream: null, cameraReady: false, busy: false, route: 0, timer: null, photoTarget: null, fileTarget: null, pendingRoute: null, questionDrafts: new Map(), answerFiles: [], answerStitched: '', paper: null };
+  const state = { detail: null, stream: null, cameraReady: false, busy: false, route: 0, timer: null, photoTarget: null, fileTarget: null, pendingRoute: null, questionDrafts: new Map(), answerFiles: [], answerStitched: '', paper: null, gradingMode: null, modes: [], contestedOnly: false };
   const statusText = { draft: '待拍照', ready: '待批改', queued: '排队中', pending: '排队中', grading: '批改中', running: '批改中', done: '已完成', failed: '批改失败', needs_review: '需查看' };
   const ANSWER_MAX_SOURCE = 30 * 1024 * 1024;
   const STITCH_MAX_WIDTH = 2400; // 与单图压缩的最长边一致，避免拼接后被二次缩小。
@@ -97,15 +97,25 @@
   function stopCamera() { state.stream?.getTracks().forEach(track => track.stop()); state.stream = null; state.cameraReady = false; }
   function back(label = '返回作业列表', target = '#list') { return `<a class="back" href="${target}">${label}</a>`; }
   function pageFor(studentId) { return state.detail.pages.find(page => page.studentId === studentId); }
+  // 模式文案与说明由服务端下发，前端不再各自维护一份。
+  function modePicker() {
+    const list = state.modes.length ? state.modes : [{ value:'fast', label:'高效模式', note:'' }, { value:'fine', label:'精批模式', note:'' }];
+    const current = list.find(item => item.value === state.gradingMode) || list[0];
+    const tabs = list.map(item => `<button type="button" role="radio" aria-checked="${item.value === current.value}" class="${item.value === current.value ? 'is-active' : ''}" data-action="mode" data-mode="${esc(item.value)}">${esc(item.label)}</button>`).join('');
+    return `<section class="mode-picker"><div class="mode-tabs" role="radiogroup" aria-label="批改模式">${tabs}</div><p class="mode-note">${esc(current.note || '')}</p></section>`;
+  }
+  const modeLabel = (value) => (state.modes.find(item => item.value === value)?.label) || (value === 'fine' ? '精批模式' : '高效模式');
   function resultsFor(studentId) { return state.detail.results.filter(result => result.studentId === studentId); }
   function isDone(studentId) { const p = pageFor(studentId); return p?.status === 'done' || (resultsFor(studentId).length >= state.detail.questions.length && state.detail.questions.length > 0); }
   async function loadList(token) {
     const data = await api('desk-list');
     if (token !== state.route) return;
+    state.gradingMode = data.gradingMode || 'fast';
+    state.modes = Array.isArray(data.modes) ? data.modes : [];
     const active = data.assignments.filter(item => activeStatus(item.status)).length;
     const review = data.assignments.reduce((sum, item) => sum + Number(item.reviewCount || 0), 0);
     const summary = data.assignments.length ? `<div class="summary-strip"><span><b>${data.assignments.length}</b> 份作业</span>${active ? `<span><b>${active}</b> 份进行中</span>` : ''}${review ? `<span class="review"><b>${review}</b> 题待复核</span>` : ''}</div>` : '';
-    app.innerHTML = `<div class="heading"><div><h1>作业</h1><p>按名单顺序拍照，拍完统一批改。</p></div><a class="button primary" href="#new">新建作业</a></div>${summary}<div class="assignment-list">${data.assignments.map(item => `<a class="assignment" href="#results/${esc(item.id)}"><header><h2>${esc(item.name)}</h2><span class="badge${statusTone(item.status)}">${esc(statusText[item.status] || item.status)}</span></header><p>${esc(item.className)} · ${esc(String(item.examDate || '').slice(0,10).replace(/-/g,'.'))}</p>${captureTicks(Number(item.capturedCount), Number(item.studentCount))}<footer><span>已拍 <b>${Number(item.capturedCount)}</b> / ${Number(item.studentCount)}</span><span>完成 <b>${Number(item.doneCount)}</b> 人</span>${item.reviewCount ? `<span class="review">待复核 <b>${Number(item.reviewCount)}</b> 题</span>` : ''}${item.averageScore != null ? `<span>平均 <b>${Number(item.averageScore).toFixed(1)}</b> 分</span>` : ''}</footer>${activeStatus(item.status) ? `<progress max="${Number(item.capturedCount) || 1}" value="${Number(item.doneCount)}" aria-label="批改进度"></progress>` : ''}</a>`).join('') || '<section class="empty"><h2>还没有作业</h2><p>选一个班级，拍下标准答案，就可以开始。</p><a class="button primary" href="#new">创建第一份作业</a></section>'}</div>`;
+    app.innerHTML = `<div class="heading"><div><h1>作业</h1><p>按名单顺序拍照，拍完统一批改。</p></div><a class="button primary" href="#new">新建作业</a></div>${modePicker()}${summary}<div class="assignment-list">${data.assignments.map(item => `<a class="assignment" href="#results/${esc(item.id)}"><header><h2>${esc(item.name)}</h2><span class="badge${statusTone(item.status)}">${esc(statusText[item.status] || item.status)}</span></header><p>${esc(item.className)} · ${esc(String(item.examDate || '').slice(0,10).replace(/-/g,'.'))}</p>${captureTicks(Number(item.capturedCount), Number(item.studentCount))}<footer><span>已拍 <b>${Number(item.capturedCount)}</b> / ${Number(item.studentCount)}</span><span>完成 <b>${Number(item.doneCount)}</b> 人</span>${item.reviewCount ? `<span class="review">待复核 <b>${Number(item.reviewCount)}</b> 题</span>` : ''}${item.averageScore != null ? `<span>平均 <b>${Number(item.averageScore).toFixed(1)}</b> 分</span>` : ''}</footer>${activeStatus(item.status) ? `<progress max="${Number(item.capturedCount) || 1}" value="${Number(item.doneCount)}" aria-label="批改进度"></progress>` : ''}</a>`).join('') || '<section class="empty"><h2>还没有作业</h2><p>选一个班级，拍下标准答案，就可以开始。</p><a class="button primary" href="#new">创建第一份作业</a></section>'}</div>`;
     if (data.assignments.some(item => activeStatus(item.status))) state.timer = setTimeout(() => loadList(token).catch(error => message(error.message)), 6000);
   }
   async function newAssignment(token) {
@@ -130,7 +140,7 @@
   function renderReview() {
     const d = state.detail, count = d.pages.length;
     const draft = state.questionDrafts.get(d.exam.id), questions = draft || d.questions;
-    app.innerHTML = `${back()}<div class="heading"><div><h1>核对照片</h1><p>${esc(d.exam.name)} · 已拍 ${count} / 未拍 ${d.students.length-count}</p></div></div><p class="muted roster-note">逐人核对姓名与照片；缺交的学生保留未拍，不会把后面的照片前移。</p><div class="roster review"><div class="roster-head"><span>学号</span><span>照片</span><span>姓名</span><span class="end">核对</span></div>${d.students.map(student => studentRow(student, true)).join('')}</div>${editable() ? `<details class="question-editor"><summary>核对题目 · ${questions.length} 题 · 满分 ${questions.reduce((sum,q)=>sum+Number(q.maxScore),0)} 分</summary><p>勾选多题后可合并，合并题号请保留原题号信息。</p><form id="questionForm" data-dirty="${Boolean(draft)}"><div id="questionRows">${questions.map(q => questionRow(q)).join('')}</div><div class="actions"><button type="button" data-action="merge">合并所选题</button><button type="submit">保存题目调整</button></div></form></details><div class="sticky-actions"><a class="button" href="#capture/${esc(d.exam.id)}">继续拍照</a><button class="primary" data-action="start" ${!count ? 'disabled' : ''}>已核对 ${count} 人，开始批改</button></div>` : `<div class="sticky-actions"><a class="button primary" href="#results/${esc(d.exam.id)}">查看批改进度</a></div>`}`;
+    app.innerHTML = `${back()}<div class="heading"><div><h1>核对照片</h1><p>${esc(d.exam.name)} · 已拍 ${count} / 未拍 ${d.students.length-count}</p></div></div><p class="muted roster-note">逐人核对姓名与照片；缺交的学生保留未拍，不会把后面的照片前移。</p><div class="roster review"><div class="roster-head"><span>学号</span><span>照片</span><span>姓名</span><span class="end">核对</span></div>${d.students.map(student => studentRow(student, true)).join('')}</div>${editable() ? `<details class="question-editor"><summary>核对题目 · ${questions.length} 题 · 满分 ${questions.reduce((sum,q)=>sum+Number(q.maxScore),0)} 分</summary><p>勾选多题后可合并，合并题号请保留原题号信息。</p><form id="questionForm" data-dirty="${Boolean(draft)}"><div id="questionRows">${questions.map(q => questionRow(q)).join('')}</div><div class="actions"><button type="button" data-action="merge">合并所选题</button><button type="submit">保存题目调整</button></div></form></details><div class="sticky-actions"><a class="button" href="#capture/${esc(d.exam.id)}">继续拍照</a>${state.gradingMode ? `<small class="mode-hint">按${esc(modeLabel(state.gradingMode))}批改</small>` : ''}<button class="primary" data-action="start" ${!count ? 'disabled' : ''}>已核对 ${count} 人，开始批改</button></div>` : `<div class="sticky-actions"><a class="button primary" href="#results/${esc(d.exam.id)}">查看批改进度</a></div>`}`;
     trackProgress();
   }
   function questionRow(q) { return `<div class="question-row"><input type="checkbox" aria-label="选择合并题目"><input name="questionNo" aria-label="题号" required value="${esc(q.questionNo)}"><input name="title" aria-label="题目说明" value="${esc(q.title)}"><input name="maxScore" aria-label="满分" type="number" min="0.5" max="1000" step="0.5" required value="${Number(q.maxScore)}"><button type="button" data-action="delete-question">删除</button></div>`; }
@@ -231,12 +241,35 @@
   function orderedResults(studentId) {
     return resultsFor(studentId).slice().sort((a, b) => Number(!a.needsReview) - Number(!b.needsReview));
   }
+  const isContested = (r) => r.agreement === 'arbitrated' || r.agreement === 'disputed';
+  function contestedLabel(studentId) {
+    const count = resultsFor(studentId).filter(isContested).length;
+    return state.contestedOnly ? `显示全部 ${resultsFor(studentId).length} 题` : `只看争议题（${count}）`;
+  }
+  // 一致、已仲裁、待复核三档语义不同：已仲裁说明有争议但已定分，不占用教师复核队列。
+  function agreementBadge(r) {
+    if (r.reviewed) return '<span class="badge good">已复核</span>';
+    if (r.needsReview) return '<span class="badge warning">待复核</span>';
+    if (r.agreement === 'arbitrated') return '<span class="badge info">已仲裁</span>';
+    if (r.agreement === 'agree') return '<span class="badge quiet">双评一致</span>';
+    return '';
+  }
+  function passesHtml(r) {
+    const passes = Array.isArray(r.passes) ? r.passes : [];
+    if (passes.length < 2) return '';
+    const name = { A: '第一次', B: '第二次', arbiter: '复核' };
+    const rows = passes.map(p => `<li><b>${name[p.pass] || p.pass || '评判'}</b><span>${p.score == null ? '未判定' : `${Number(p.score)} 分`}</span><em>${esc(p.reason || p.analysis || '')}</em></li>`).join('');
+    return `<details class="passes"><summary>${passes.length} 次评判详情</summary><ul>${rows}</ul></details>`;
+  }
   function resultListHtml(studentId) {
-    const results = orderedResults(studentId);
-    if (!results.length) return '<p class="empty">还没有批改结果。</p>';
-    const pending = results.filter(r => r.needsReview).length;
-    const note = pending ? `<p class="result-note">${pending} 题待复核，已排在前面。</p>` : '';
-    return note + results.map(r => `<section class="result-question" data-question="${esc(r.questionNo)}"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : r.reviewed ? '<span class="badge good">已复核</span>' : ''}<em class="review-hint">点按复核</em></span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small>${reviewForm(r)}</section>`).join('');
+    const all = orderedResults(studentId);
+    if (!all.length) return '<p class="empty">还没有批改结果。</p>';
+    const results = state.contestedOnly ? all.filter(r => isContested(r) || r.needsReview) : all;
+    const pending = all.filter(r => r.needsReview).length;
+    const contested = all.filter(isContested).length;
+    const note = [pending ? `${pending} 题待复核，已排在前面。` : '', contested ? `${contested} 题两次评判不一致。` : ''].filter(Boolean).join(' ');
+    const empty = state.contestedOnly && !results.length ? '<p class="empty">没有争议题，两次评判结论一致。</p>' : '';
+    return (note ? `<p class="result-note">${note}</p>` : '') + empty + results.map(r => `<section class="result-question" data-question="${esc(r.questionNo)}"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${agreementBadge(r)}<em class="review-hint">点按复核</em></span></header><p>${esc(r.analysis || '暂无评语')}</p>${passesHtml(r)}${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small>${reviewForm(r)}</section>`).join('');
   }
   function renderStudentResults(studentId) {
     const open = new Set([...app.querySelectorAll('.result-question.is-open')].map(card => card.dataset.question));
@@ -257,7 +290,7 @@
     if (!student) throw new Error('名单快照中没有该学生。');
     const { total, max, scored } = studentScore(id);
     state.paper = { studentId:id, mode:'student', student:'', answer:'', loading:true };
-    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><span class="score">${scored ? total : '—'}<small> / ${max}</small></span></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}</div><div class="result-list">${resultListHtml(id)}</div>`;
+    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><span class="score">${scored ? total : '—'}<small> / ${max}</small></span></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}${resultsFor(id).some(isContested) ? `<button data-action="contested" aria-pressed="${state.contestedOnly}" class="${state.contestedOnly ? 'is-active' : ''}">${contestedLabel(id)}</button>` : ''}</div><div class="result-list">${resultListHtml(id)}</div>`;
   }
   async function renderCapture(requestedId, token) {
     const d = state.detail;
@@ -516,6 +549,23 @@
       const no=rows.map(r=>r.querySelector('[name=questionNo]').value).join('+'), title=rows.map(r=>r.querySelector('[name=title]').value).filter(Boolean).join('；'), max=rows.reduce((sum,r)=>sum+Number(r.querySelector('[name=maxScore]').value),0);
       rows[0].outerHTML=questionRow({questionNo:no,title,maxScore:max}); rows.slice(1).forEach(r=>r.remove()); markQuestionsDirty(); return;
     }
+    if(action==='contested') {
+      state.contestedOnly=!state.contestedOnly;
+      const studentId=state.paper?.studentId; if(!studentId) return;
+      const list=app.querySelector('.result-list');
+      if(list) list.innerHTML=resultListHtml(studentId);
+      const toggle=app.querySelector('[data-action="contested"]');
+      if(toggle) { toggle.classList.toggle('is-active', state.contestedOnly); toggle.setAttribute('aria-pressed', String(state.contestedOnly)); toggle.textContent=contestedLabel(studentId); }
+      return;
+    }
+    if(action==='mode') {
+      const mode=button.dataset.mode;
+      if(!mode || mode===state.gradingMode) return;
+      button.disabled=true;
+      try { await api('desk-mode',{gradingMode:mode}); state.gradingMode=mode; clearTimeout(state.timer); await loadList(state.route); }
+      catch(error) { button.disabled=false; message(error.message); }
+      return;
+    }
     await busyWork(async()=>{
       if(action==='shutter') {
         const video=document.querySelector('#cameraVideo'); if(!video.videoWidth) throw new Error('相机尚未就绪，请稍后重试。');
@@ -530,7 +580,8 @@
       if(action==='start') {
         if(document.querySelector('#questionForm')?.dataset.dirty==='true') throw new Error('请先保存题目调整，再开始批改。');
         await api('desk-confirm',{examId:state.detail.exam.id,pageIds:state.detail.pages.map(p=>p.id)});
-        await api('desk-start',{examId:state.detail.exam.id}); state.busy=false; go('results',state.detail.exam.id);
+        // 模式在开始这一刻快照进任务；未加载过设置时交给服务端用教师默认值。
+        await api('desk-start',{examId:state.detail.exam.id,...(state.gradingMode?{gradingMode:state.gradingMode}:{})}); state.busy=false; go('results',state.detail.exam.id);
       }
       if(action==='retry') { await api('desk-retry',{examId:state.detail.exam.id}); state.busy=false; await navigate(); }
     });
