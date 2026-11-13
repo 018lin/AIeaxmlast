@@ -124,6 +124,21 @@
     app.innerHTML = `${back()}<div class="heading"><div><h1>${esc(d.exam.name)}</h1><p>已完成 ${done} 人 · ${d.results.filter(r=>r.needsReview).length} 题待复核</p></div><button data-action="refresh">刷新</button></div>${editable() ? `<div class="actions result-actions"><a class="button primary" href="#capture/${esc(d.exam.id)}">${d.pages.length ? '继续拍照' : '开始拍照'}</a><a class="button" href="#review/${esc(d.exam.id)}">核对照片 (${d.pages.length}/${d.students.length})</a></div>` : `<div class="progress-panel"><div class="progress-copy"><span>批改进度</span><b>${done} / ${d.students.length}</b></div><progress max="${d.pages.length || 1}" value="${done}" aria-label="已完成学生数"></progress><p class="muted">${['done','needs_review','failed'].includes(d.batch.status) ? '批改已结束，可逐人查看每题得分与评语。' : '后台正在批改，可以锁屏或离开，回来后继续查看。'}</p>${failed ? '<button data-action="retry">重试失败作业</button>' : ''}</div>`}<div class="roster results"><div class="roster-head"><span>学号</span><span>姓名</span><span class="end">得分</span><span class="end">操作</span></div>${d.students.map(s=>studentRow(s)).join('')}</div>`;
     trackProgress();
   }
+  async function pollResults() {
+    const token = state.route, examId = state.detail?.exam.id;
+    if (!examId) return;
+    try {
+      const detail = await api('desk-detail', undefined, { examId });
+      if (token !== state.route || state.detail?.exam.id !== examId || route()[0] !== 'results') return;
+      state.detail = detail;
+      renderResults();
+      if (activeStatus(detail.batch.status)) state.timer = setTimeout(pollResults, 6000);
+    } catch (error) {
+      if (token !== state.route) return;
+      message(error.message);
+      state.timer = setTimeout(pollResults, 6000);
+    }
+  }
   function paperBoxes(studentId, positions) {
     return resultsFor(studentId).map(r => {
       const bbox = positions?.[r.questionNo] || r.bbox;
@@ -234,7 +249,7 @@
       if (view === 'capture') return await renderCapture(studentId,token);
       if (view === 'review') { renderReview(); loadThumbnails(token, examId); }
       else if (view === 'student') { renderStudent(studentId); loadPaperImages(studentId, token).catch(error => message(error.message)); }
-      else { renderResults(); if (['grading','queued','pending','running'].includes(detail.batch.status)) state.timer = setTimeout(navigate,6000); }
+      else { renderResults(); if (activeStatus(detail.batch.status)) state.timer = setTimeout(pollResults, 6000); }
     } catch (error) { if (token === state.route) { message(error.message); app.innerHTML = `${back()}<section class="empty"><p>加载失败，已保存的作业不会丢失。</p><button data-action="refresh">重新加载</button></section>`; } }
   }
   async function loadThumbnails(token, examId) {
