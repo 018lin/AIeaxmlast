@@ -348,9 +348,12 @@ function serveStatic(request, response) {
   const normalizedPath = pathname === "/" ? "/index.html" : pathname;
   const filePath = path.resolve(ROOT_DIR, `.${normalizedPath}`);
 
-  // Only root-level frontend assets are public, never backend source, env files or tests.
+  // Only root-level frontend assets and the /assets image folder are public,
+  // never backend source, env files or tests.
   const extension = path.extname(filePath).toLowerCase();
-  if (path.dirname(filePath) !== ROOT_DIR || !MIME_TYPES[extension] || extension === ".json" ||
+  const relativeDir = path.relative(ROOT_DIR, path.dirname(filePath));
+  const publicImageDir = relativeDir === "assets" && [".png", ".jpg", ".jpeg", ".svg", ".ico", ".webp"].includes(extension);
+  if ((relativeDir !== "" && !publicImageDir) || !MIME_TYPES[extension] || extension === ".json" ||
       ["db.js", "server.js"].includes(path.basename(filePath).toLowerCase())) {
     response.writeHead(403);
     response.end("Forbidden");

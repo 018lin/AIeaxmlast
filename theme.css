@@ -145,13 +145,17 @@ img {
   flex: 0 0 auto;
   width: 38px;
   height: 38px;
-  border-radius: 10px;
   color: #fff;
-  background: linear-gradient(145deg, #ff7d2c 0%, #f25a10 100%);
-  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .3), 0 4px 10px rgba(242, 90, 16, .2);
   font-size: 19px;
   font-weight: 700;
   line-height: 1;
+}
+
+.logo-box img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .logo-box svg {
