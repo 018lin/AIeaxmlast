@@ -404,6 +404,7 @@
         await api('desk-result',{examId:state.detail.exam.id,studentId,questionNo,score,comment});
         const result = resultsFor(studentId).find(r=>r.questionNo===questionNo);
         if(result) { result.score=score; result.needsReview=false; result.reviewed=true; result.teacherComment=comment; }
+        form.closest('.result-question')?.classList.remove('is-open');
         renderStudentResults(studentId);
         message(`第 ${questionNo} 题已保存复核结果。`);
         return;
