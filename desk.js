@@ -112,7 +112,7 @@
     const { classes } = await api('bootstrap');
     if (token !== state.route) return;
     clearAnswerFiles();
-    app.innerHTML = `${back()}<div class="heading"><div><h1>新建作业</h1><p>拍 1–2 张标准答案，自动拼成一份。</p></div></div>${classes.length ? `<form class="form" id="createForm"><label class="field"><span class="field-label">班级</span><select name="classId" required>${classes.map(item => `<option value="${esc(item.id)}" ${item.id === window.AppAuth.getDefaultClassId() ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label><label class="field"><span class="field-label">作业名称</span><input name="name" required maxlength="120" placeholder="例如：第三单元课后练习"></label><label class="field"><span class="field-label">日期</span><input name="examDate" type="date" required value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)}"></label><div class="field"><span class="field-label">标准答案<em>必填</em></span><div class="upload"><p class="upload-title">拍下标准答案（1–2 张）</p><p class="upload-note">先选的在上，后选的在下，两张会自动拼接成一张再识别。保留完整题号。未标分的题默认 10 分，创建后可在核对页删题、合并或调整满分。</p><div class="upload-actions" id="answerPicker"><label class="button primary">拍摄答案<input id="answerCamera" type="file" accept="image/*" capture="environment" aria-label="拍摄标准答案"></label><label class="button">从图库选择<input id="answerFile" type="file" accept="image/*" multiple aria-label="从图库选择标准答案，最多两张"></label></div><div id="answerPreview" class="answer-previews" hidden aria-live="polite"></div></div></div><button class="primary" type="submit">识别答案并创建</button><p class="muted form-note" id="createHint">创建时按学号冻结名单，后续名单变动不会打乱拍摄顺序。</p></form>` : '<section class="empty"><h2>先准备一份班级名单</h2><p>拍照时会按学号依次对应学生。</p><a class="button primary" href="./class-setup.html">管理班级</a></section>'}`;
+    app.innerHTML = `${back()}<div class="heading"><div><h1>新建作业</h1><p>拍 1–2 张标准答案，自动拼成一份。</p></div></div>${classes.length ? `<form class="form" id="createForm"><label class="field"><span class="field-label">班级</span><select name="classId" required>${classes.map(item => `<option value="${esc(item.id)}" ${item.id === window.AppAuth.getDefaultClassId() ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label><label class="field"><span class="field-label">作业名称</span><input name="name" required maxlength="120" placeholder="例如：第三单元课后练习"></label><label class="field"><span class="field-label">日期</span><input name="examDate" type="date" required value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)}"></label><div class="field"><span class="field-label">标准答案<em>必填</em></span><div class="upload"><p class="upload-title" id="answerTitle">拍下标准答案（1–2 张）</p><p class="upload-note">先选的在上，后选的在下，两张会自动拼接成一张再识别。保留完整题号。未标分的题默认 10 分，创建后可在核对页删题、合并或调整满分。</p><div class="upload-actions" id="answerPicker"><label class="button primary"><span id="answerCameraLabel">拍摄答案</span><input id="answerCamera" type="file" accept="image/*" capture="environment" aria-label="拍摄标准答案"></label><label class="button"><span id="answerFileLabel">从图库选择</span><input id="answerFile" type="file" accept="image/*" multiple aria-label="从图库选择标准答案，最多两张"></label></div><div id="answerPreview" class="answer-previews" hidden aria-live="polite"></div></div></div><button class="primary" type="submit">识别答案并创建</button><p class="muted form-note" id="createHint">创建时按学号冻结名单，后续名单变动不会打乱拍摄顺序。</p></form>` : '<section class="empty"><h2>先准备一份班级名单</h2><p>拍照时会按学号依次对应学生。</p><a class="button primary" href="./class-setup.html">管理班级</a></section>'}`;
   }
   function studentRow(student, review = false) {
     const page = pageFor(student.id), results = resultsFor(student.id), done = isDone(student.id);
@@ -325,31 +325,42 @@
     if (!box) return;
     const files = state.answerFiles, picker = document.querySelector('#answerPicker');
     const two = files.length === 2;
+    const title = document.querySelector('#answerTitle');
+    const cameraLabel = document.querySelector('#answerCameraLabel');
+    const fileLabel = document.querySelector('#answerFileLabel');
     box.hidden = !files.length;
     box.classList.toggle('is-single', files.length === 1);
     if (picker) picker.hidden = two;
-    box.innerHTML = files.map((item, index) => `<div class="answer-shot"><div class="answer-shot-head"><b>${two ? (index ? '下' : '上') : '标准答案'}</b><span>${two ? (index ? '拼在下方' : '拼在上方') : '单张上传'}</span></div><img src="${item.url}" alt="标准答案第 ${index + 1} 张预览"><button type="button" data-answer-action="remove" data-index="${index}">删除</button></div>`).join('') + (two ? '<div class="answer-stitch-bar"><span>按上、下顺序拼接成一张</span><button type="button" data-answer-action="swap">交换顺序</button></div>' : '');
+    if (title) title.textContent = two ? '已添加 2 张，按上、下拼接' : files.length ? '已添加 1 张，还可添加第 2 张' : '拍下标准答案（1–2 张）';
+    if (cameraLabel) cameraLabel.textContent = files.length ? '拍摄第二张' : '拍摄答案';
+    if (fileLabel) fileLabel.textContent = files.length ? '从图库添加第二张' : '从图库选择';
+    box.innerHTML = files.map((item, index) => `<div class="answer-shot"><div class="answer-shot-head"><b>${two ? (index ? '下' : '上') : '上'}</b><span>${two ? `第 ${index + 1} 张 · ${index ? '拼在下方' : '拼在上方'}` : '第 1 张 · 已添加'}</span></div><img src="${item.url}" alt="标准答案第 ${index + 1} 张预览"><button type="button" data-answer-action="remove" data-index="${index}">删除</button></div>`).join('') + (two ? '<div class="answer-stitch-bar"><span>按上、下顺序拼接成一张</span><button type="button" data-answer-action="swap">交换顺序</button></div>' : files.length ? '<div class="answer-stitch-bar"><span>可以只传这一张，或再添加第 2 张（下）</span></div>' : '');
   }
   async function addAnswerFiles(files) {
     const room = 2 - state.answerFiles.length;
     if (room <= 0) throw new Error('标准答案最多 2 张，请先删除一张再添加。');
-    let warning = files.length > room ? '标准答案最多 2 张，超出部分未添加。' : '';
+    if (files.length > room) throw new Error(`最多还能添加 ${room} 张，请重新选择。`);
     const accepted = [];
-    for (const file of files.slice(0, room)) {
-      if (!file.type.startsWith('image/')) { warning = '请选择图片文件。'; continue; }
-      if (file.size > ANSWER_MAX_SOURCE) { warning = '单张图片超过 30MB，请选择较小的照片。'; continue; }
-      const url = URL.createObjectURL(file);
-      try { await loadImage(url); accepted.push({ file, url }); }
-      catch (error) { URL.revokeObjectURL(url); warning = error.message; }
+    try {
+      for (const file of files) {
+        if (file.type && !file.type.startsWith('image/')) throw new Error('请选择图片文件。');
+        if (file.size > ANSWER_MAX_SOURCE) throw new Error('单张图片超过 30MB，请选择较小的照片。');
+        const url = URL.createObjectURL(file);
+        try { await loadImage(url); }
+        catch (error) { URL.revokeObjectURL(url); throw error; }
+        accepted.push({ file, url });
+      }
+    } catch (error) {
+      for (const item of accepted) URL.revokeObjectURL(item.url);
+      throw error;
     }
-    if (!accepted.length) throw new Error(warning || '图片无法读取，请重新选择。');
     state.answerFiles.push(...accepted);
     state.answerStitched = '';
     renderAnswerFiles();
-    message(warning);
+    message();
   }
   async function imageData(file) {
-    if (!file || !file.type.startsWith('image/')) throw new Error('请选择图片文件。');
+    if (!file || (file.type && !file.type.startsWith('image/'))) throw new Error('请选择图片文件。');
     if (file.size > ANSWER_MAX_SOURCE) throw new Error('图片超过 30MB，请选择较小的照片。');
     const url = URL.createObjectURL(file);
     try {
@@ -524,10 +535,9 @@
   });
   document.addEventListener('change',event=>{
     if(!['answerFile','answerCamera'].includes(event.target.id)) return;
-    const files=[...event.target.files];
-    event.target.value='';
-    if(!files.length || state.busy) return;
-    busyWork(async()=>{ message('正在读取图片…'); await addAnswerFiles(files); });
+    const input=event.target, files=[...input.files];
+    if(!files.length || state.busy) { input.value=''; return; }
+    busyWork(async()=>{ message('正在读取图片…'); try { await addAnswerFiles(files); } finally { input.value=''; } });
   });
   function markQuestionsDirty() {
     const form=app.querySelector('#questionForm');
