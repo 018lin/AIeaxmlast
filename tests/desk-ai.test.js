@@ -305,6 +305,56 @@ test("unreliable overlays are hidden entirely instead of drawn in the wrong plac
     [null, null, null]);
 });
 
+test("single-column pages use a dedicated student-only localization pass", async (t) => {
+  const all = expected(2);
+  const image = `data:image/png;base64,${Buffer.from("synthetic").toString("base64")}`;
+  const calls = mockProvider(t, (body) => {
+    const text = body.messages[0].content[0].text;
+    if (text.includes("请定位下列题目的印刷题号")) {
+      return { boxes: [
+        { question_no: "1", bbox: [0.1, 0.6, 0.8, 0.1] },
+        { question_no: "2", bbox: [0.1, 0.75, 0.8, 0.1] },
+      ] };
+    }
+    const graded = resultFor(all);
+    graded.questions.forEach((question, index) => { question.bbox = [0.1, 0.1 + index * 0.2, 0.8, 0.08]; });
+    return graded;
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: image, expectedQuestions: all });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(graded.result.questions.map((q) => q.bbox), [
+    [0.1, 0.6, 0.8, 0.1], [0.1, 0.75, 0.8, 0.1],
+  ]);
+});
+
+test("uniformly shifted boxes are anchored to the last ink row", async (t) => {
+  const sharp = require("sharp");
+  const image = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600">
+    <rect width="100%" height="100%" fill="#fff"/>
+    <rect x="100" y="280" width="300" height="20" fill="#111"/>
+  </svg>`)).png().toBuffer();
+  const all = expected(2);
+  mockProvider(t, (body) => {
+    const text = body.messages[0].content[0].text;
+    if (text.includes("请定位下列题目的印刷题号")) {
+      return { boxes: [
+        { question_no: "1", bbox: [0.1, 0.1, 0.8, 0.1] },
+        { question_no: "2", bbox: [0.1, 0.25, 0.8, 0.1] },
+      ] };
+    }
+    const graded = resultFor(all);
+    graded.questions.forEach((question, index) => { question.bbox = [0.1, 0.1 + index * 0.15, 0.8, 0.1]; });
+    return graded;
+  });
+  const graded = await gradeWholePaper({
+    teacherAnswerImage: "teacher", studentImage: `data:image/png;base64,${image.toString("base64")}`,
+    expectedQuestions: all,
+  });
+  const tops = graded.result.questions.map((q) => q.bbox[1]);
+  assert.ok(Math.abs(tops[0] - 0.25) < 0.02, `first top ${tops[0]}`);
+  assert.ok(Math.abs(tops[1] - 0.4) < 0.02, `second top ${tops[1]}`);
+});
+
 test("question positions are normalized, clamped and invalid values dropped", () => {
   const raw = resultFor(expected(3));
   raw.questions[0].bbox = [0.1, 0.2, 0.3, 0.4];
