@@ -82,6 +82,37 @@ test("desk-create atomically saves private answer, exam, sorted snapshot, batch 
   mock.check();
 });
 
+test("answer locate caches one crop per question and per sub question", async () => {
+  const png = await sharp({ create: { width: 600, height: 800, channels: 3, background: "white" } }).png().toBuffer();
+  let located = 0;
+  const mock = loadDb([
+    recordStep(),
+    rowStep(/SELECT mime_type, image_data FROM uploaded_images WHERE id = \$1/, [{ mime_type: "image/png", image_data: png }]),
+    rowStep(/SELECT q.id, q.question_no, q.title, q.max_score, q.question_type, q.sub_question_count/, [{
+      id: id(20), question_no: "1", title: "Q1", max_score: "5", question_type: "解答", sub_question_count: 2,
+      subs: [{ id: id(30), label: "(1)", maxScore: 2, ordinal: 0 }, { id: id(31), label: "(2)", maxScore: 3, ordinal: 1 }],
+    }]),
+    rowStep(/DELETE FROM uploaded_images i USING exam_questions q/),
+    rowStep(/DELETE FROM uploaded_images i USING exam_sub_questions s/),
+    rowStep(/INSERT INTO uploaded_images/), rowStep(/SET desk_private = true/),
+    { match: /UPDATE exam_questions SET answer_box/, run: (v) => { assert.equal(v[0], id(20)); assert.equal(JSON.parse(v[1]).length, 4); return []; } },
+    rowStep(/INSERT INTO uploaded_images/), rowStep(/SET desk_private = true/),
+    { match: /UPDATE exam_sub_questions SET answer_box/, run: (v) => { assert.equal(v[0], id(30)); return []; } },
+    rowStep(/INSERT INTO uploaded_images/), rowStep(/SET desk_private = true/),
+    { match: /UPDATE exam_sub_questions SET answer_box/, run: (v) => { assert.equal(v[0], id(31)); return []; } },
+  ]);
+  const result = await mock.db.locateDeskAnswer({ examId }, "teacher-A", async (image, structure) => {
+    located += 1;
+    assert.ok(image.startsWith("data:image/png;base64,"));
+    assert.equal(structure[0].subs.length, 2);
+    return { "1": [0.1, 0.1, 0.8, 0.3] };
+  });
+  assert.deepEqual(result, { located: 1 });
+  assert.equal(located, 1);
+  assert.equal(mock.queries.at(-1).sql, "COMMIT");
+  mock.check();
+});
+
 test("failed AI recognition creates no partial records", async () => {
   const mock = loadDb([rowStep(/SELECT 1 FROM classes/, [{}])]);
   await assert.rejects(mock.db.createDeskExam({ classId, name: "Test", examDate: "2026-01-01", answerImage: await syntheticImage() }, "teacher-A", async () => { throw new Error("recognition failed"); }), /recognition failed/);

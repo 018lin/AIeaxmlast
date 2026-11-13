@@ -35,6 +35,7 @@ function fixtures() {
   else if(action==='desk-list')result={assignments:f.empty?[]:[{id:'e1',name:d.exam.name,className:'测试班',examDate:'2026-11-12',status:d.batch.status,pagesPerStudent:d.batch.pagesPerStudent,capturedCount:d.pages.length,studentCount:3,doneCount:d.pages.filter(p=>p.status==='done').length}]};
   else if(action==='desk-detail')result=u.searchParams.get('examId')==='e2'?{...d,exam:{...d.exam,id:'e2',name:'另一份合成练习'}}:d;
   else if(action==='desk-create'){d.exam.name=body.name;result={examId:'e1'};}
+  else if(action==='desk-answer-locate')result={located:2};
   else if(action==='desk-image')result={image,boxes:{'1':[0.08,0.08,0.84,0.34]},regions:f.regions||null};
   else if(action==='desk-answer-image')result={image};
   else if(action==='desk-capture'){const pageNo=body.pageNo||1;d.pages=d.pages.filter(p=>!(p.studentId===body.studentId&&(p.pageNo||1)===pageNo));d.pages.push({id:'p'+body.studentId+'-'+pageNo,studentId:body.studentId,pageNo,status:'ready',captureOrder:body.captureOrder});}
@@ -67,7 +68,8 @@ function fixtures() {
  ok('Authenticated fixture list',await evaluate(`fixture.log[0].auth==='Bearer fixture-not-real'`));await shot('desktop-list');
  await route('#new');await shot('mobile390-new',390,844);await shot('mobile360-new',360,800);
  await evaluate(`document.querySelector('[name=name]').value='合成练习';syntheticUpload('answerFile')`);await wait(`!document.querySelector('#answerPreview').hidden && !document.querySelector('[type=submit]').disabled`);await evaluate(`fixture.hold='desk-create'`);await click('[type=submit]');await wait(`!document.querySelector('#busyOverlay').hidden`);ok('Answer upload shows centered progress overlay',await evaluate(`getComputedStyle(document.querySelector('#busyOverlay')).position==='fixed' && document.querySelector('.busy-percent').textContent.endsWith('%')`));await shot('mobile390-answer-progress',390,844);await evaluate(`fixture.hold='';fixture.release()`);await wait(`location.hash==='#capture/e1' && !!document.querySelector('.camera') && document.querySelector('#busyOverlay').hidden`);
- ok('Answer image submitted',await evaluate(`fixture.log.find(x=>x.action==='desk-create').body.answerImage.startsWith('data:image/jpeg')`));await shot('mobile390-camera',390,844);
+ ok('Answer image submitted',await evaluate(`fixture.log.find(x=>x.action==='desk-create').body.answerImage.startsWith('data:image/jpeg')`));
+ ok('Answer locate runs as a separate request',await evaluate(`(()=>{const calls=fixture.log.filter(x=>x.action==='desk-answer-locate');return calls.length===1 && calls[0].body.examId==='e1'})()`));await shot('mobile390-camera',390,844);
  await click('[data-action=gallery]');await evaluate(`syntheticUpload('photoFile')`);await wait(`location.hash==='#capture/e1/s2' && document.querySelector('h1').textContent==='测试乙'`);
  await click('[data-action=skip]');await wait(`document.querySelector('h1').textContent==='测试丙'`);
  await evaluate(`fixture.fail='desk-capture';syntheticUpload('photoFile')`);await wait(`document.querySelector('#notice').textContent==='合成请求失败'`);ok('Failed upload stays on same student',await evaluate(`location.hash==='#capture/e1/s3' && fixture.d.pages.length===1 && !document.querySelector('[data-action=gallery]').disabled`));const error390=await shot('mobile390-upload-error',390,844);const error360=await shot('mobile360-upload-error',360,800);ok('Mobile upload error fits viewport at 390 and 360',error390.scrollHeight<=error390.height && error360.scrollHeight<=error360.height);
@@ -148,6 +150,7 @@ function fixtures() {
  await evaluate(`fixture.preflightInvalid=false;fixture.d.pages.forEach(p=>p.regionStatus='')`);await route('#list');await route('#review/e1');
  await click('[data-action=start]');await wait(`location.hash==='#results/e1' && !!document.querySelector('.score')`);
  ok('Clean preflight starts grading',await evaluate(`fixture.d.results.length===6 && fixture.d.results.every(r=>r.subs.length===(r.questionNo==='1'?2:0))`));
+ ok('Preflight builds templates one page per request',await evaluate(`(()=>{const calls=fixture.log.filter(x=>x.action==='desk-preflight').slice(-3);return calls.length===3 && calls[0].body.pageNo===1 && calls[1].body.pageNo===2 && calls[2].body.pageNo===undefined})()`));
  await evaluate(`fixture.regions=[{questionId:'q1',questionNo:'1',bbox:[0.08,0.08,0.84,0.34],subs:[{subId:'sq1',label:'(1)',bbox:[0.08,0.08,0.84,0.16]},{subId:'sq2',label:'(2)',bbox:[0.08,0.25,0.84,0.16]}]},{questionId:'q2',questionNo:'2',bbox:[0.08,0.52,0.84,0.34],subs:[]}]`);
  await route('#student/e1/s1');await wait(`!!document.querySelector('.sub-row') && document.querySelectorAll('.paper-box').length===3`);
  ok('Sub details and sub-level boxes render',await evaluate(`document.querySelectorAll('.sub-row').length===2 && document.querySelector('#app').textContent.includes('(1)') && document.querySelector('#app').textContent.includes('(2)')`));

@@ -68,16 +68,30 @@
     busyLabel.textContent = '识别完成';
     return new Promise(resolve => setTimeout(resolve, 260));
   }
+  function holdBusyLabel(text) {
+    clearInterval(busyTimer);
+    busyPercent.textContent = '92%';
+    busyRing.style.strokeDashoffset = String(RING_LENGTH * 0.08);
+    busyLabel.textContent = text;
+  }
   function stopBusy() {
     clearInterval(busyTimer);
     busyOverlay.hidden = true;
     document.body.classList.remove('is-busy');
   }
+  function httpMessage(status) {
+    if (status === 413) return '上传的图片超过服务器大小限制，请换一张更小的照片。';
+    if (status === 504 || status === 502) return '服务器处理超时，请重试；若多次失败请换一张更小的照片。';
+    return `服务暂时不可用（HTTP ${status}），请稍后重试。`;
+  }
   async function api(action, payload, query = {}) {
     const params = new URLSearchParams({ action, ...query });
     const response = await window.AppAuth.request(`/api/mvp?${params}`, payload === undefined ? {} : { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || '请求失败，请重试。');
+    const text = await response.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : {}; } catch { data = null; }
+    if (!response.ok) throw new Error(data?.message || httpMessage(response.status));
+    if (!data) throw new Error('服务器返回了无法识别的响应，请稍后重试。');
     return data;
   }
   function stopCamera() { state.stream?.getTracks().forEach(track => track.stop()); state.stream = null; state.cameraReady = false; }
@@ -383,16 +397,25 @@
       } catch { image.alt = '加载失败，请点看照片重试'; }
     }
   }
+  const MAX_SIDE = 2200, JPEG_QUALITY = .86;
+  function canvasJpeg(source, width = source.naturalWidth || source.videoWidth || source.width,
+    height = source.naturalHeight || source.videoHeight || source.height, maxSide = MAX_SIDE, quality = JPEG_QUALITY) {
+    const ratio = Math.min(1, maxSide / Math.max(width, height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(source,0,0,canvas.width,canvas.height);
+    return canvas.toDataURL('image/jpeg',quality);
+  }
   async function imageData(file) {
     if (!file || !file.type.startsWith('image/')) throw new Error('请选择图片文件。');
     if (file.size > 30*1024*1024) throw new Error('图片超过 30MB，请选择较小的照片。');
     const url = URL.createObjectURL(file);
     try {
       const image = new Image(); image.src = url; await image.decode();
-      const ratio = Math.min(1,2400/Math.max(image.naturalWidth,image.naturalHeight));
-      const canvas = document.createElement('canvas'); canvas.width = Math.round(image.naturalWidth*ratio); canvas.height = Math.round(image.naturalHeight*ratio);
-      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.drawImage(image,0,0,canvas.width,canvas.height);
-      return canvas.toDataURL('image/jpeg',.9);
+      return canvasJpeg(image);
     } finally { URL.revokeObjectURL(url); }
   }
   async function busyWork(fn) {
@@ -652,8 +675,7 @@
     await busyWork(async()=>{
       if(action==='shutter') {
         const video=document.querySelector('#cameraVideo'); if(!video.videoWidth) throw new Error('相机尚未就绪，请稍后重试。');
-        const canvas=document.createElement('canvas'); canvas.width=video.videoWidth; canvas.height=video.videoHeight; canvas.getContext('2d').drawImage(video,0,0);
-        message('正在保存，请不要切换学生…'); await savePhoto(canvas.toDataURL('image/jpeg',.9));
+        message('正在保存，请不要切换学生…'); await savePhoto(canvasJpeg(video));
       }
       if(action==='photo') {
         const {image}=await api('desk-image',undefined,{examId:state.detail.exam.id,studentId:button.dataset.student,pageNo:button.dataset.page || '1'});
@@ -665,6 +687,8 @@
         const examId = state.detail.exam.id;
         message('正在对齐每页并检查作答区域…');
         await api('desk-confirm',{examId,pageIds:state.detail.pages.map(p=>p.id)});
+        const pageNos=[...new Set(state.detail.pages.map(p => p.pageNo || 1))].sort((a,b)=>a-b);
+        for (const pageNo of pageNos) { message(`正在定位第 ${pageNo} 页的题框…`); await api('desk-preflight',{examId,pageNo}); }
         const preflight = await api('desk-preflight',{examId});
         if (Number(preflight.invalid) > 0) {
           state.busy=false;
@@ -737,6 +761,9 @@
         startBusy();
         try {
           const created=await api('desk-create',{classId:fields.get('classId'),name:fields.get('name'),examDate:fields.get('examDate'),pagesPerStudent:Number(fields.get('pagesPerStudent')) || 1,answerImage:state.answer});
+          holdBusyLabel('正在定位答案区域…');
+          try { await api('desk-answer-locate',{examId:created.examId}); }
+          catch (error) { state.flash=`${error.message} 可稍后在核对页手动校正题框。`; }
           await finishBusy();
           stopBusy();
           state.busy=false; go('capture',created.examId);
