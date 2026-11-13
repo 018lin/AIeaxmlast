@@ -27,9 +27,20 @@ Vercel 是请求级的无服务器环境，函数执行完进程就回收，跑�
   node_modules/        # 只装 pg / sharp / xlsx
   lib/ai-grader.js
   lib/answer-layout.js
+  lib/preflight.js
   lib/whole-paper-worker.js
   .env
 ```
+
+并发由环境变量控制，写在服务器 `.env` 里（不填则用默认值）：
+
+```text
+WORKER_CONCURRENCY=6      # 同时跑的任务数（小题裁图会继续按并发切分）
+WORKER_PER_STUDENT=2      # 同一学生同时批改的大题组上限
+```
+
+学生多时把 `WORKER_CONCURRENCY` 提到 8–10、`WORKER_PER_STUDENT` 保持 2–3；
+DeepSeek 限流或 429 增多时再降回来。改完 `.env` 同样要重启服务。
 
 ## 可用性判断：心跳表
 
@@ -62,11 +73,14 @@ cd /opt/scan-grading-worker && node --env-file=.env -e \
 服务端跑的是 `/opt/scan-grading-worker` 里的副本，**不随 git push 自动更新**。
 修改以下任一文件后，需要重新上传并重启：
 
-`worker.js`、`db.js`、`schema.sql`、`lib/whole-paper-worker.js`、`lib/ai-grader.js`、`lib/answer-layout.js`（依赖变化时还有 `package.json`）
+`worker.js`、`db.js`、`schema.sql`、`lib/whole-paper-worker.js`、`lib/ai-grader.js`、`lib/answer-layout.js`、`lib/preflight.js`（依赖变化时还有 `package.json`）
+
+注意：`lib/preflight.js` 同时被 Vercel 上的 `desk-preflight` 使用，Vercel 靠 `git push` 自动部署；
+服务器副本只影响 worker 自身。两边都要更新才一致。
 
 ```bash
 scp worker.js db.js schema.sql root@43.155.216.162:/opt/scan-grading-worker/
-scp lib/whole-paper-worker.js lib/ai-grader.js lib/answer-layout.js root@43.155.216.162:/opt/scan-grading-worker/lib/
+scp lib/whole-paper-worker.js lib/ai-grader.js lib/answer-layout.js lib/preflight.js root@43.155.216.162:/opt/scan-grading-worker/lib/
 ssh root@43.155.216.162 'systemctl restart scan-grading-worker'
 ```
 

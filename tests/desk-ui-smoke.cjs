@@ -20,7 +20,7 @@ function fixtures() {
  if(!sessionStorage.getItem('fixture-seeded')) {localStorage.setItem('aihw.auth.session.v1',JSON.stringify({account:'synthetic',name:'测试教师',token:'fixture-not-real',expiresAt:Date.now()+3600000}));sessionStorage.setItem('fixture-seeded','1');}
  const canvas=document.createElement('canvas');canvas.width=600;canvas.height=800;const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,600,800);ctx.fillStyle='black';ctx.font='28px sans-serif';ctx.fillText('SYNTHETIC TEST ONLY',40,70);ctx.fillText('1. A  2. B  3. C',40,130);
  const image=canvas.toDataURL('image/png');
- const d={exam:{id:'e1',name:'合成练习',className:'测试班'},batch:{status:'draft'},students:[{id:'s1',studentNo:'001',name:'测试甲'},{id:'s2',studentNo:'002',name:'测试乙'},{id:'s3',studentNo:'003',name:'测试丙'}],pages:[],questions:[1,2,3].map(n=>({id:'q'+n,questionNo:String(n),title:'合成题 '+n,maxScore:5})),results:[]};
+ const d={exam:{id:'e1',name:'合成练习',className:'测试班'},batch:{status:'draft',pagesPerStudent:1},students:[{id:'s1',studentNo:'001',name:'测试甲'},{id:'s2',studentNo:'002',name:'测试乙'},{id:'s3',studentNo:'003',name:'测试丙'}],pages:[],questions:[1,2,3].map(n=>({id:'q'+n,questionNo:String(n),title:'合成题 '+n,maxScore:5})),results:[]};
  const f=window.fixture={d,image,log:[],empty:false,noClasses:false,fail:'',failStatus:500,hold:'',release:null};
  navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('Synthetic denied camera','NotAllowedError');};
  const original=window.fetch;
@@ -32,15 +32,27 @@ function fixtures() {
   if(f.fail===action){f.fail='';return new Response(JSON.stringify({message:'合成请求失败'}),{status:f.failStatus});}
   let result={ok:true};
   if(action==='bootstrap')result={classes:f.noClasses?[]:[{id:'c1',name:'测试班'}]};
-  else if(action==='desk-list')result={assignments:f.empty?[]:[{id:'e1',name:d.exam.name,className:'测试班',examDate:'2026-11-12',status:d.batch.status,capturedCount:d.pages.length,studentCount:3,doneCount:d.pages.filter(p=>p.status==='done').length}]};
+  else if(action==='desk-list')result={assignments:f.empty?[]:[{id:'e1',name:d.exam.name,className:'测试班',examDate:'2026-11-12',status:d.batch.status,pagesPerStudent:d.batch.pagesPerStudent,capturedCount:d.pages.length,studentCount:3,doneCount:d.pages.filter(p=>p.status==='done').length}]};
   else if(action==='desk-detail')result=u.searchParams.get('examId')==='e2'?{...d,exam:{...d.exam,id:'e2',name:'另一份合成练习'}}:d;
   else if(action==='desk-create'){d.exam.name=body.name;result={examId:'e1'};}
-  else if(action==='desk-image')result={image};
+  else if(action==='desk-image')result={image,boxes:{'1':[0.08,0.08,0.84,0.34]},regions:f.regions||null};
   else if(action==='desk-answer-image')result={image};
-  else if(action==='desk-capture'){d.pages=d.pages.filter(p=>p.studentId!==body.studentId);d.pages.push({id:'p'+body.studentId,studentId:body.studentId,status:'ready',captureOrder:body.captureOrder});}
+  else if(action==='desk-capture'){const pageNo=body.pageNo||1;d.pages=d.pages.filter(p=>!(p.studentId===body.studentId&&(p.pageNo||1)===pageNo));d.pages.push({id:'p'+body.studentId+'-'+pageNo,studentId:body.studentId,pageNo,status:'ready',captureOrder:body.captureOrder});}
   else if(action==='desk-questions')d.questions=body.questions;
   else if(action==='desk-confirm')d.batch.status='confirmed';
-  else if(action==='desk-start'){d.batch.status='done';d.pages.forEach(p=>p.status='done');d.results=d.pages.flatMap(p=>d.questions.map((q,i)=>({...q,studentId:p.studentId,score:4,maxScore:q.maxScore,needsReview:true,analysis:'合成评语',suggestions:['合成建议'],knowledgePoints:['合成知识'],bbox:[0.05,0.06+i*0.3,0.9,0.24]})));}
+  else if(action==='desk-preflight')result={invalid:f.preflightInvalid?1:0,check:0,pages:[]};
+  else if(action==='desk-regions')result={count:body.regions.length};
+  else if(action==='desk-relocate')result={status:'ok',regions:[]};
+  else if(action==='desk-sub-score')result={score:body.score,needsReview:false};
+  else if(action==='desk-regrade')result={};
+  else if(action==='desk-start'){
+   d.batch.status='done';d.pages.forEach(p=>p.status='done');
+   const seen=new Set(),unique=d.pages.filter(p=>{if(seen.has(p.studentId))return false;seen.add(p.studentId);return true;});
+   d.results=unique.flatMap(p=>d.questions.map((q,i)=>{
+    const subs=(q.subQuestions||[]).map((sub,s)=>({id:'sub-'+p.studentId+'-'+i+'-'+s,subQuestionId:sub.id,label:sub.label,score:4,maxScore:sub.maxScore,needsReview:true,studentAnswer:'合成作答',analysis:''}));
+    return {...q,studentId:p.studentId,questionId:q.id||('q'+i),score:4,maxScore:q.maxScore,needsReview:true,analysis:'合成评语',suggestions:['合成建议'],knowledgePoints:['合成知识'],bbox:[0.05,0.06+i*0.3,0.9,0.24],subs};
+   }));
+  }
   else if(action==='desk-retry')d.batch.status='grading';
   else throw Error('Unhandled fixture '+action);
   return new Response(JSON.stringify(result),{status:200,headers:{'Content-Type':'application/json'}});
@@ -99,6 +111,55 @@ function fixtures() {
  // Save normally before logout; do not disable beforeunload guards.
  await evaluate(`document.querySelector('#questionForm').requestSubmit()`);await wait(`document.querySelector('#notice').textContent.includes('题目调整已保存')`);await route('#results/e1');await route('#review/e1');
  ok('Saving persists draft and clears dirty state',await evaluate(`fixture.d.questions[0].maxScore===99 && document.querySelector('[name=maxScore]').value==='99' && document.querySelector('#questionForm').dataset.dirty==='false'`));
+ // Multi-page capture, sub-question structure, region editor and sub-score editing.
+ await evaluate(`Object.assign(fixture.d,{batch:{status:'draft',pagesPerStudent:2},pages:[],results:[],questions:[{id:'q1',questionNo:'1',title:'合成题 1',maxScore:5,questionType:'解答',subQuestions:[{id:'sq1',label:'(1)',maxScore:2},{id:'sq2',label:'(2)',maxScore:3}]},{id:'q2',questionNo:'2',title:'合成题 2',maxScore:5,questionType:'解答',subQuestions:[]}]});fixture.preflightInvalid=false;fixture.regions=null`);
+ await route('#capture/e1/s1');
+ ok('Multi-page camera shows page position',await evaluate(`document.querySelector('.camera-top').textContent.includes('1 / 2 页') && document.querySelector('.camera-status').textContent.includes('第 1 页')`));
+ await evaluate(`syntheticUpload('photoFile')`);await wait(`location.hash==='#capture/e1/s1/2' && document.querySelector('h1').textContent==='测试甲'`);
+ ok('Saving page 1 advances to page 2 of the same student',await evaluate(`fixture.log.filter(x=>x.action==='desk-capture').at(-1).body.pageNo===1 && document.querySelector('.camera-top').textContent.includes('2 / 2 页')`));
+ await evaluate(`syntheticUpload('photoFile')`);await wait(`location.hash==='#capture/e1/s2/1' && document.querySelector('h1').textContent==='测试乙'`);
+ ok('Saving page 2 advances to the next student',await evaluate(`fixture.log.filter(x=>x.action==='desk-capture').at(-1).body.pageNo===2`));
+ await evaluate(`syntheticUpload('photoFile')`);await wait(`location.hash==='#capture/e1/s2/2'`);
+ await click('[data-action=skip]');await wait(`location.hash==='#capture/e1/s3/1'`);
+ ok('Skipping page 2 moves on to the next student',await evaluate(`document.querySelector('h1').textContent==='测试丙'`));
+ await evaluate(`syntheticUpload('photoFile')`);await wait(`location.hash==='#capture/e1/s3/2'`);
+ await evaluate(`syntheticUpload('photoFile')`);await wait(`location.hash==='#review/e1' && !!document.querySelector('.question-editor')`);
+ ok('Review counts pages and flags an incomplete student',await evaluate(`document.querySelector('#app').textContent.includes('已拍 5 / 6 页') && document.querySelector('#app').textContent.includes('已拍 1 / 2 页')`));
+ await shot('mobile360-review-multipage',360,800);
+ await click('[data-action=regions][data-student=s1]');await wait(`document.querySelector('#regionDialog').open`);
+ await shot('desktop-region-editor',1440,1000);
+ ok('Region editor seeds template boxes and splits sub rows',await evaluate(`document.querySelectorAll('.region-box.question').length===1 && document.querySelectorAll('.region-box.sub').length===2 && document.querySelector('#regionChips').textContent.includes('2 小题') && document.querySelector('#regionChips').textContent.includes('待画框')`));
+ await wait(`document.querySelector('#regionImage').complete && document.querySelector('#regionCanvas').getBoundingClientRect().height>100`);
+ const canvasRect=await evaluate(`(()=>{const r=document.querySelector('#regionCanvas').getBoundingClientRect();return {x:r.left,y:r.top,w:r.width,h:r.height}})()`);
+ const at=(fx,fy)=>({x:Math.round(canvasRect.x+canvasRect.w*fx),y:Math.round(canvasRect.y+canvasRect.h*fy)});
+ await send('Input.dispatchMouseEvent',{type:'mousePressed',...at(0.2,0.55),button:'left',clickCount:1});
+ await send('Input.dispatchMouseEvent',{type:'mouseMoved',...at(0.7,0.85),button:'left'});
+ await send('Input.dispatchMouseEvent',{type:'mouseReleased',...at(0.7,0.85),button:'left',clickCount:1});
+ ok('Unboxed question can be drawn on the photo',await evaluate(`document.querySelectorAll('.region-box.question').length===2 && !document.querySelector('#regionChips').textContent.includes('待画框')`));
+ await click('[data-action=region-relocate]');await wait(`document.querySelector('#notice').textContent.includes('重定位')`);
+ ok('Relocate keeps manual boxes for review',await evaluate(`fixture.log.at(-1).action==='desk-relocate' && fixture.log.at(-1).body.pageNo===1`));
+ await delay(150);await click('[data-action=region-save]');await wait(`document.querySelector('#notice').textContent.includes('框位已保存')`);
+ ok('Saving regions sends question and sub boxes',await evaluate(`(()=>{const call=fixture.log.filter(x=>x.action==='desk-regions').at(-1).body;return call.pageNo===1 && call.regions.length===2 && call.regions[0].subs.length===2 && call.regions[1].bbox[2]>=0.4})()`));
+ await evaluate(`fixture.preflightInvalid=true;fixture.d.pages.forEach(p=>p.regionStatus='invalid')`);await route('#list');await route('#review/e1');
+ ok('Preflight anomalies mark student rows red',await evaluate(`document.querySelectorAll('.student.is-invalid').length===3 && !!document.querySelector('.roster-note.warning')`));
+ const beforeStart=await evaluate(`fixture.log.filter(x=>x.action==='desk-start').length`);
+ await click('[data-action=start]');await wait(`document.querySelector('#notice').textContent.includes('自动定位异常')`);
+ ok('Invalid preflight pages block grading',await evaluate(`fixture.log.filter(x=>x.action==='desk-start').length===${beforeStart}`));
+ await evaluate(`fixture.preflightInvalid=false;fixture.d.pages.forEach(p=>p.regionStatus='')`);await route('#list');await route('#review/e1');
+ await click('[data-action=start]');await wait(`location.hash==='#results/e1' && !!document.querySelector('.score')`);
+ ok('Clean preflight starts grading',await evaluate(`fixture.d.results.length===6 && fixture.d.results.every(r=>r.subs.length===(r.questionNo==='1'?2:0))`));
+ await evaluate(`fixture.regions=[{questionId:'q1',questionNo:'1',bbox:[0.08,0.08,0.84,0.34],subs:[{subId:'sq1',label:'(1)',bbox:[0.08,0.08,0.84,0.16]},{subId:'sq2',label:'(2)',bbox:[0.08,0.25,0.84,0.16]}]},{questionId:'q2',questionNo:'2',bbox:[0.08,0.52,0.84,0.34],subs:[]}]`);
+ await route('#student/e1/s1');await wait(`!!document.querySelector('.sub-row') && document.querySelectorAll('.paper-box').length===3`);
+ ok('Sub details and sub-level boxes render',await evaluate(`document.querySelectorAll('.sub-row').length===2 && document.querySelector('#app').textContent.includes('(1)') && document.querySelector('#app').textContent.includes('(2)')`));
+ await shot('mobile360-student-subs',360,800);
+ ok('Multi-page student exposes page tabs',await evaluate(`document.querySelectorAll('.paper-pages button').length===2`));
+ await click('.paper-pages [data-page="2"]');await wait(`document.querySelector('.paper-pages button.is-active').textContent.includes('2')`);
+ ok('Page tab switches the annotated page',await evaluate(`!!document.querySelector('#paperStage .paper-image')`));
+ const subId=await evaluate(`(()=>{const f=document.querySelector('.sub-score-form');f.querySelector('[name=score]').value='1';f.requestSubmit();return f.dataset.sub})()`);
+ await wait(`document.querySelector('#notice').textContent.includes('已改分')`);
+ ok('Editing a sub score posts its sub result id',await evaluate(`(()=>{const call=fixture.log.filter(x=>x.action==='desk-sub-score').at(-1).body;return call.subResultId===${JSON.stringify(subId)} && call.score===1 && call.studentId==='s1'})()`));
+ await click('[data-action=regrade][data-question=q1]');await wait(`location.hash==='#results/e1' && !!document.querySelector('.score')`);
+ ok('Regrade submits only the affected question',await evaluate(`(()=>{const call=fixture.log.filter(x=>x.action==='desk-regrade').at(-1).body;return call.questionId==='q1' && call.studentId==='s1'})()`));
  await route('#list');await click('.teacher-menu summary');await click('[data-action=logout]');await wait(`location.pathname==='/index.html'`);ok('Logout clears session and redirects',await evaluate(`localStorage.getItem('aihw.auth.session.v1')===null`));await send('Page.navigate',{url:'http://localhost:8081/desk.html#student/e1/s1'});await wait(`location.pathname==='/index.html'`);ok('Unauthenticated desk redirects');
  ok('Auth redirect preserves and resolves desk deep link',await evaluate(`new URLSearchParams(location.search).get('next')==='desk.html#student/e1/s1' && AppAuth.resolveNextPage(new URLSearchParams(location.search).get('next'))==='./desk.html#student/e1/s1'`));
  const errors=events.filter(e=>e.method==='Runtime.exceptionThrown'||e.method==='Log.entryAdded'&&e.params.entry.level==='error'||e.method==='Runtime.consoleAPICalled'&&e.params.type==='error');console.log('CONSOLE_ERRORS',JSON.stringify(errors));console.log('SUMMARY',JSON.stringify({checks:checks.length,shots,temp},null,2));

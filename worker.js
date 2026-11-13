@@ -1,7 +1,11 @@
 const db = require("./db");
 const { createWholePaperWorker } = require("./lib/whole-paper-worker");
 
-const worker = createWholePaperWorker({ db });
+const worker = createWholePaperWorker({
+  db,
+  concurrency: Number(process.env.WORKER_CONCURRENCY) || 6,
+  perStudent: Number(process.env.WORKER_PER_STUDENT) || 2,
+});
 
 async function heartbeat() {
   try {

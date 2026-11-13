@@ -7,7 +7,11 @@ const { authenticate, getRequestAccount } = require("./lib/auth");
 const { gradeImages } = require("./lib/ai-grader");
 const { handleMvpRequest } = require("./lib/mvp-handler");
 const { createWholePaperWorker } = require("./lib/whole-paper-worker");
-const wholePaperWorker = createWholePaperWorker({ db });
+const wholePaperWorker = createWholePaperWorker({
+  db,
+  concurrency: Number(process.env.WORKER_CONCURRENCY) || 6,
+  perStudent: Number(process.env.WORKER_PER_STUDENT) || 2,
+});
 
 const ROOT_DIR = __dirname;
 

@@ -32,7 +32,11 @@ function mockProvider(t, respond) {
 test("answer recognition uses one teacher-only request and validates explicit scores", async (t) => {
   const calls = mockProvider(t, () => ({ questions: [{ question_no: "1", title: "Addition", max_score: 5 }] }));
   assert.deepEqual(await recognizeAnswerQuestions("teacher-test-image"), {
-    questions: [{ questionNo: "1", title: "Addition", maxScore: 5 }], totalScore: 5,
+    questions: [{
+      questionNo: "1", title: "Addition", maxScore: 5, questionType: "", subCount: 1,
+      subs: [{ label: "", maxScore: 5 }], objective: false,
+    }],
+    totalScore: 5,
   });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].messages[0].content.filter((c) => c.type === "image_url").map((c) => c.image_url.url), ["teacher-test-image"]);
@@ -53,7 +57,8 @@ for (const count of [1, 5, 15, 16, 20]) {
       const group = gradeGroup(body);
       if (!group) return { boxes: [] };
       const index = calls.length;
-      assert.deepEqual(group, all.slice((index - 1) * size, index * size));
+      assert.deepEqual(group.map(({ questionNo, title, maxScore }) => ({ questionNo, title, maxScore })),
+        all.slice((index - 1) * size, index * size));
       assert.deepEqual(body.messages[0].content.slice(1).map((c) => c.image_url.url), ["teacher", "student"]);
       return resultFor(group);
     });
