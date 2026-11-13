@@ -17,7 +17,7 @@ async function request(action, { db = {}, method = "POST", payload = {}, account
 }
 
 test("authentication is required before any desk operation", async () => {
-  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-answer-image", "desk-create", "desk-answer-locate", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions"]) {
+  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-answer-image", "desk-create", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions"]) {
     assert.equal((await request(action, { account: "" })).status, 401);
   }
 });
@@ -26,7 +26,7 @@ test("desk GET contract is passed through with the authenticated tenant", async 
   for (const [action, method, args, body] of [
     ["desk-list", "listDeskAssignments", ["teacher-A"], { assignments: [] }],
     ["desk-detail", "getDeskDetail", ["exam", "teacher-A"], { exam: { id: "exam", name: "Test" }, batch: { id: "batch", status: "draft" }, students: [], pages: [], questions: [], results: [] }],
-    ["desk-image", "getDeskImage", ["exam", "student", "teacher-A", false, false, false, 1], { image: "synthetic-image" }],
+    ["desk-image", "getDeskImage", ["exam", "student", "teacher-A", false, false, false], { image: "synthetic-image" }],
     ["desk-answer-image", "getDeskAnswerImage", ["exam", "teacher-A"], { image: "synthetic-answer" }],
   ]) {
     const result = await request(action, { method: "GET", db: { [method]: async (...actual) => { assert.deepEqual(actual, args); return body; } } });
@@ -42,16 +42,6 @@ test("desk-create delegates AI recognition and returns only examId/batchId", asy
     assert.equal(typeof recognize, "function");
     return { examId: "exam", batchId: "batch" };
   } } }), { status: 201, body: { examId: "exam", batchId: "batch" } });
-});
-
-test("desk-answer-locate delegates the locate call with the authenticated tenant", async () => {
-  const payload = { examId: "exam" };
-  assert.deepEqual(await request("desk-answer-locate", { payload, db: { locateDeskAnswer: async (actual, account, locate) => {
-    assert.equal(actual, payload);
-    assert.equal(account, "teacher-A");
-    assert.equal(typeof locate, "function");
-    return { located: 2 };
-  } } }), { status: 200, body: { located: 2 } });
 });
 
 test("desk writes preserve empty success response and authenticated account", async () => {

@@ -69,50 +69,14 @@ test("desk-create atomically saves private answer, exam, sorted snapshot, batch 
       assert.deepEqual(JSON.parse(v[7]).map((s) => s.name), ["Amy", "Bob", "Zed", "Ann"]);
       return [];
     } }, rowStep(/INSERT INTO scan_batches/),
-    { match: /INSERT INTO exam_questions/, run: (v) => { assert.equal(v[7], true); return []; } },
-    rowStep(/INSERT INTO exam_sub_questions/),
-    { match: /INSERT INTO exam_questions/, run: (v) => { assert.equal(v[7], true); return []; } },
-    rowStep(/INSERT INTO exam_sub_questions/), rowStep(/UPDATE exams SET total_score/),
+    { match: /INSERT INTO exam_questions/, run: (v) => { assert.equal(v[5], true); return []; } },
+    rowStep(/INSERT INTO exam_questions/), rowStep(/UPDATE exams SET total_score/),
   ]);
   const output = await mock.db.createDeskExam({ classId, name: "Test", examDate: "2026-01-01", answerImage: await syntheticImage() }, "teacher-A", async () => { recognized++; return { questions }; });
   assert.equal(recognized, 1);
   assert.deepEqual(Object.keys(output), ["examId", "batchId"]);
   assert.equal(mock.queries.at(-1).sql, "COMMIT");
   assert.equal(mock.released, 1);
-  mock.check();
-});
-
-test("answer locate caches one crop per question and per sub question", async () => {
-  const png = await sharp({ create: { width: 600, height: 800, channels: 3, background: "white" } }).png().toBuffer();
-  let located = 0;
-  const mock = loadDb([
-    recordStep(),
-    rowStep(/SELECT mime_type, image_data FROM uploaded_images WHERE id = \$1/, [{ mime_type: "image/png", image_data: png }]),
-    { match: /SELECT q.id, q.question_no, q.title, q.max_score, q.question_type, q.sub_question_count/, run: (v, sql) => {
-      assert.match(sql, /jsonb_agg/);
-      return [{
-        id: id(20), question_no: "1", title: "Q1", max_score: "5", question_type: "解答", sub_question_count: 2,
-        subs: [{ id: id(30), label: "(1)", maxScore: 2, ordinal: 0 }, { id: id(31), label: "(2)", maxScore: 3, ordinal: 1 }],
-      }];
-    } },
-    rowStep(/DELETE FROM uploaded_images i USING exam_questions q/),
-    rowStep(/DELETE FROM uploaded_images i USING exam_sub_questions s/),
-    rowStep(/INSERT INTO uploaded_images/), rowStep(/SET desk_private = true/),
-    { match: /UPDATE exam_questions SET answer_box/, run: (v) => { assert.equal(v[0], id(20)); assert.equal(JSON.parse(v[1]).length, 4); return []; } },
-    rowStep(/INSERT INTO uploaded_images/), rowStep(/SET desk_private = true/),
-    { match: /UPDATE exam_sub_questions SET answer_box/, run: (v) => { assert.equal(v[0], id(30)); return []; } },
-    rowStep(/INSERT INTO uploaded_images/), rowStep(/SET desk_private = true/),
-    { match: /UPDATE exam_sub_questions SET answer_box/, run: (v) => { assert.equal(v[0], id(31)); return []; } },
-  ]);
-  const result = await mock.db.locateDeskAnswer({ examId }, "teacher-A", async (image, structure) => {
-    located += 1;
-    assert.ok(image.startsWith("data:image/png;base64,"));
-    assert.equal(structure[0].subs.length, 2);
-    return { "1": [0.1, 0.1, 0.8, 0.3] };
-  });
-  assert.deepEqual(result, { located: 1 });
-  assert.equal(located, 1);
-  assert.equal(mock.queries.at(-1).sql, "COMMIT");
   mock.check();
 });
 
@@ -196,24 +160,17 @@ test("empty confirmation and malformed IDs are 400", async () => {
 
 test("unconfirmed or stale version cannot enqueue", async () => {
   for (const patch of [{}, { confirmed_version: 1, confirmed_page_ids: [pageId] }, { confirmed_version: 2, confirmed_page_ids: [id(99)] }]) {
-    const mock = loadDb([recordStep(record(patch)),
-      rowStep(/SELECT id, student_id, page_no, capture_order FROM scanned_pages/, [{ id: pageId, student_id: studentId, page_no: 1 }])]);
+    const mock = loadDb([recordStep(record(patch)), rowStep(/SELECT id FROM scanned_pages/, [{ id: pageId }])]);
     await assert.rejects(mock.db.startDeskGrading({ examId }, "teacher-A"), { statusCode: 409 });
     assert.ok(!mock.queries.some((q) => /INSERT INTO grading_jobs/.test(q.sql))); mock.check();
   }
 });
 
-test("start enqueues paper_group tasks and commits immutable grading start", async () => {
+test("start enqueues a single whole-page job and commits immutable grading start", async () => {
   const mock = loadDb([
-    recordStep(record({ confirmed_version: 2, confirmed_page_ids: [pageId] })),
-    rowStep(/SELECT id, student_id, page_no, capture_order FROM scanned_pages/, [{ id: pageId, student_id: studentId, page_no: 1 }]),
-    rowStep(/SELECT COUNT\(\*\) AS count FROM student_page_regions/, [{ count: "0" }]),
-    rowStep(/FROM exam_questions q/, [{ id: id(20), question_no: "1", title: "Q", max_score: "5", question_type: "计算题", subs: [] }]),
-    rowStep(/SELECT student_id, scanned_page_id, page_no, regions FROM student_page_regions/, []),
-    { match: /INSERT INTO grading_jobs.*'paper_group'.*ON CONFLICT/, run: (v) => {
-      assert.equal(v[2], studentId); assert.deepEqual(JSON.parse(v[4]), [pageId]);
-      assert.deepEqual(JSON.parse(v[5]), [id(20)]); return [];
-    } },
+    recordStep(record({ confirmed_version: 2, confirmed_page_ids: [pageId] })), rowStep(/SELECT id FROM scanned_pages/, [{ id: pageId }]),
+    rowStep(/SELECT question_no AS/, [{ questionNo: "1", title: "Q", max_score: "5" }]),
+    { match: /INSERT INTO grading_jobs.*'whole_paper'.*ON CONFLICT/, run: (v) => { assert.equal(v[2], pageId); return []; } },
     rowStep(/grading_started_at = now\(\)/),
   ]);
   assert.deepEqual(await mock.db.startDeskGrading({ examId }, "teacher-A"), {});
@@ -229,14 +186,9 @@ test("repeated start after grading or failure is idempotent", async () => {
 });
 
 test("question draft replacement supports merge/delete and clears confirmation", async () => {
-  const mock = loadDb([recordStep(),
-    rowStep(/DELETE FROM uploaded_images i USING exam_questions q/),
-    rowStep(/DELETE FROM uploaded_images i USING exam_sub_questions s/),
-    rowStep(/DELETE FROM page_layout_templates/), rowStep(/DELETE FROM student_page_regions/),
-    rowStep(/DELETE FROM exam_questions/),
-    { match: /INSERT INTO exam_questions/, run: (v) => { assert.equal(v[2], "1-2"); assert.equal(v[4], 15); assert.equal(v[7], false); return []; } },
-    rowStep(/INSERT INTO exam_sub_questions/), rowStep(/UPDATE exams SET total_score/),
-    rowStep(/capture_version = capture_version \+ 1/),
+  const mock = loadDb([recordStep(), rowStep(/DELETE FROM exam_questions/),
+    { match: /INSERT INTO exam_questions/, run: (v) => { assert.equal(v[2], "1-2"); assert.equal(v[4], 15); assert.equal(v[5], false); return []; } },
+    rowStep(/UPDATE exams SET total_score/), rowStep(/confirmed_version = NULL/),
   ]);
   await mock.db.updateDeskQuestions({ examId, questions: [{ questionNo: "1-2", title: "Merged", maxScore: 15 }] }, "teacher-A");
   mock.check();
@@ -280,11 +232,11 @@ test("desk-image never returns another snapshot student's image", async () => {
 
 test("list contract uses snapshot counts, finished student averages and numeric JSON", async () => {
   const mock = loadDb([{ match: /jsonb_array_length\(e.student_order_snapshot\).*e.teacher_account = \$1/, run: (v, sql) => {
-    assert.equal(v[0], "teacher-A"); assert.match(sql, /FROM grading_sub_results gs WHERE gs.result_id = r.id AND gs.needs_review AND NOT gs.reviewed/);
-    return [{ id: examId, name: "Test", class_name: "Class", exam_date: "2026-01-01", batch_id: batchId, status: "grading", student_count: "10", pages_per_student: "2", captured_count: "5", done_count: "3", review_count: "2", average_score: "8.5" }];
+    assert.equal(v[0], "teacher-A"); assert.match(sql, /COUNT\(\*\) FROM grading_results r WHERE r.batch_id = b.id AND r.needs_review\) AS review_count/);
+    return [{ id: examId, name: "Test", class_name: "Class", exam_date: "2026-01-01", batch_id: batchId, status: "grading", student_count: "10", captured_count: "5", done_count: "3", review_count: "2", average_score: "8.5" }];
   } }]);
   const { assignments: [item] } = await mock.db.listDeskAssignments("teacher-A");
-  assert.deepEqual(item, { id: examId, name: "Test", className: "Class", examDate: "2026-01-01", batchId, status: "grading", studentCount: 10, pagesPerStudent: 2, capturedCount: 5, doneCount: 3, reviewCount: 2, averageScore: 8.5 }); mock.check();
+  assert.deepEqual(item, { id: examId, name: "Test", className: "Class", examDate: "2026-01-01", batchId, status: "grading", studentCount: 10, capturedCount: 5, doneCount: 3, reviewCount: 2, averageScore: 8.5 }); mock.check();
 });
 
 test("legacy routes reject managed exam, batch, question and template targets", async () => {
@@ -370,24 +322,23 @@ test("heartbeat cannot revive an expired lease", async () => {
 
 test("desk detail is a consistent metadata-only snapshot with short result fields", async () => {
   const mock = loadDb([recordStep(),
-    rowStep(/FROM scanned_pages p LEFT JOIN LATERAL/, [{ id: pageId, student_id: studentId, capture_order: 0, page_no: 1, status: "done", error: "", region_status: "ok", region_issue: "", region_confidence: "0.92" }]),
-    { match: /SELECT q\.id, q\.question_no, q\.max_score, q\.title, q\.question_type/, run: (v, sql) => { assert.match(sql, /jsonb_agg/); return questionRows; } },
-    rowStep(/SELECT r\.\*, q\.question_no/, [{ id: id(40), student_id: studentId, question_id: id(20), question_no: "1", question_type: "", final_score: null, score: "4", max_score: "5", analysis: "Good", suggestions: [], ai_result: { knowledge_points: ["Math"], bbox: [0.1, 0.2, 0.3, 0.4] }, needs_review: true }]),
-    rowStep(/FROM grading_sub_results WHERE batch_id/, []),
+    rowStep(/FROM scanned_pages p LEFT JOIN grading_jobs/, [{ id: pageId, student_id: studentId, capture_order: 0, status: "done", error: "" }]),
+    rowStep(/SELECT id, question_no, max_score, title/, questionRows),
+    rowStep(/SELECT r\.\*, q.question_no/, [{ student_id: studentId, question_no: "1", final_score: null, score: "4", max_score: "5", analysis: "Good", suggestions: [], ai_result: { knowledge_points: ["Math"], bbox: [0.1, 0.2, 0.3, 0.4] }, needs_review: true }]),
   ]);
   const detail = await mock.db.getDeskDetail(examId, "teacher-A");
   assert.deepEqual(Object.keys(detail), ["exam", "batch", "students", "pages", "questions", "results"]);
   assert.deepEqual(detail.students, record().student_order_snapshot);
-  assert.deepEqual(detail.pages[0], { id: pageId, studentId, captureOrder: 0, pageNo: 1, status: "done", error: "", regionStatus: "ok", regionIssue: "", regionConfidence: 0.92 });
-  assert.deepEqual(detail.results[0], { studentId, questionId: id(20), questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, bbox: [0.1, 0.2, 0.3, 0.4], subs: [] });
+  assert.deepEqual(detail.pages[0], { id: pageId, studentId, captureOrder: 0, status: "done", error: "" });
+  assert.deepEqual(detail.results[0], { studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, bbox: [0.1, 0.2, 0.3, 0.4] });
   assert.equal(mock.queries[0].sql, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"); mock.check();
 });
 
 test("desk image loads only the requested student's private photo on demand", async () => {
-  const mock = loadDb([recordStep(), { match: /FROM scanned_pages p .*p\.page_no = \$3/, run: (v) => {
-    assert.deepEqual(v, [batchId, studentId, 1]); return [{ id: pageId, mime_type: "image/png", image_data: Buffer.from("synthetic") }];
+  const mock = loadDb([recordStep(), { match: /p.batch_id = \$1 AND p.student_id = \$2/, run: (v) => {
+    assert.deepEqual(v, [batchId, studentId]); return [{ mime_type: "image/png", image_data: Buffer.from("synthetic") }];
   } }]);
-  assert.deepEqual(await mock.db.getDeskImage(examId, studentId, "teacher-A"), { image: "data:image/png;base64,c3ludGhldGlj", pageNo: 1 }); mock.check();
+  assert.deepEqual(await mock.db.getDeskImage(examId, studentId, "teacher-A"), { image: "data:image/png;base64,c3ludGhldGlj" }); mock.check();
 });
 
 test("desk image can return boxes aligned to the student's real ink rows", async () => {
@@ -396,8 +347,7 @@ test("desk image can return boxes aligned to the student's real ink rows", async
   const source = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600">
     <rect width="100%" height="100%" fill="#fff"/>${title}${rows.join("")}</svg>`)).png().toBuffer();
   const mock = loadDb([recordStep(),
-    rowStep(/FROM scanned_pages p .*p\.page_no = \$3/, [{ id: pageId, mime_type: "image/png", image_data: source }]),
-    rowStep(/FROM student_page_regions WHERE scanned_page_id/, []),
+    rowStep(/p.batch_id = \$1 AND p.student_id = \$2/, [{ mime_type: "image/png", image_data: source }]),
     rowStep(/FROM grading_results r JOIN exam_questions q/, [1, 2, 3].map((n) => ({ question_no: String(n), bbox: [0.05, 0.1 * n, 0.8, 0.08] }))),
   ]);
   const result = await mock.db.getDeskImage(examId, studentId, "teacher-A", false, false, true);
@@ -453,166 +403,6 @@ test("worker failure atomically settles a terminal failed batch rather than hang
   ]);
   assert.equal(await mock.db.failWholePaperJob(job, "unreadable answer"), true);
   assert.equal(mock.queries.at(-1).sql, "COMMIT"); mock.check();
-});
-
-test("paper-group claiming caps per-student concurrency and marks claimed batches grading", async () => {
-  const mock = loadDb([
-    { match: /WITH running AS .*ROW_NUMBER\(\) OVER \(PARTITION BY j\.batch_id, j\.student_id/, run: (v) => {
-      assert.deepEqual(v, [3, 2, 4]);
-      return [{ id: jobId, batch_id: batchId, student_id: studentId }, { id: id(9), batch_id: batchId, student_id: id(10) }];
-    } },
-    { match: /UPDATE grading_jobs SET status = 'running', attempts = attempts \+ 1/, run: (v) => {
-      assert.equal(v[0], jobId); assert.equal(v[2], 120); assert.match(v[1], /^[0-9a-f-]{36}$/);
-      return [{ id: jobId, batch_id: batchId, student_id: studentId }];
-    } },
-    { match: /UPDATE grading_jobs SET status = 'running', attempts = attempts \+ 1/, run: (v) => {
-      assert.equal(v[0], id(9)); return [{ id: id(9), batch_id: batchId, student_id: id(10) }];
-    } },
-    rowStep(/UPDATE scan_batches SET status = 'grading' WHERE id = \$1/),
-  ]);
-  const claimed = await mock.db.claimPaperGroupJobs(4, 2);
-  assert.equal(claimed.length, 2);
-  assert.equal(claimed[0].batchId, batchId);
-  assert.ok(claimed[0].leaseToken);
-  assert.equal(mock.queries.at(-1).sql, "COMMIT");
-  mock.check();
-});
-
-test("paper-group restart recovery requeues expired leases and settles their batches", async () => {
-  const mock = loadDb([
-    rowStep(/FROM \( SELECT batch_id, created_at FROM grading_jobs/, [{ batch_id: batchId }]),
-    { match: /status = CASE WHEN attempts < \$2 THEN 'pending' ELSE 'failed' END/, run: (v, sql) => {
-      assert.equal(v[0], batchId); assert.equal(v[1], 3);
-      assert.match(sql, /job_kind = 'paper_group' AND status = 'running'/);
-      return [];
-    } },
-    rowStep(/UPDATE scan_batches b SET status = CASE.*THEN 'failed'/),
-  ]);
-  await mock.db.recoverPaperGroupJobs();
-  assert.equal(mock.queries.at(-1).sql, "COMMIT"); mock.check();
-});
-
-test("paper-group completion replaces the old result and writes one sub row per sub question", async () => {
-  const questionId = id(20), resultId = id(50), subA = id(40), subB = id(41);
-  const paperGrade = { model: "mock", result: { questions: [{
-    question_no: "1", max_score: 5, score: 3, confidence: 0.9,
-    parts: [{ label: "(1)", score: 2, max_score: 3, correct: false }, { label: "(2)", score: 1, max_score: 2, correct: false }],
-  }] } };
-  const mock = loadDb([
-    rowStep(/SELECT id FROM scan_batches .*FOR UPDATE/, [{ id: batchId }]),
-    { match: /j\.lease_token = \$3.*j\.job_kind = 'paper_group'/, run: () => [{ ...jobRow, exam_id: examId, question_ids: [questionId] }] },
-    rowStep(/FROM exam_questions q LEFT JOIN exam_sub_questions/, [{ id: questionId, question_no: "1", title: "Q1", max_score: "5", question_type: "解答", subs: [
-      { id: subA, label: "(1)", maxScore: "3", ordinal: 0 }, { id: subB, label: "(2)", maxScore: "2", ordinal: 1 },
-    ] }]),
-    { match: /DELETE FROM grading_results WHERE batch_id = \$1 AND student_id = \$2 AND question_id = \$3/, run: (v) => {
-      assert.deepEqual(v, [batchId, studentId, questionId]); return [];
-    } },
-    { match: /INSERT INTO grading_results/, run: () => [{ id: resultId }] },
-    { match: /INSERT INTO grading_sub_results/, run: (v) => {
-      assert.deepEqual([v[1], v[5], v[6], v[7], v[8], v[9]], [resultId, questionId, subA, "(1)", 2, 3]); return [];
-    } },
-    { match: /INSERT INTO grading_sub_results/, run: (v) => {
-      assert.deepEqual([v[6], v[7], v[8], v[9]], [subB, "(2)", 1, 2]); return [];
-    } },
-    rowStep(/SET status = 'done'.*overall_feedback/),
-    rowStep(/UPDATE scan_batches b SET status = CASE/),
-  ]);
-  assert.equal(await mock.db.completePaperGroupJob({ ...job, studentId }, paperGrade), true);
-  assert.equal(mock.queries.at(-1).sql, "COMMIT");
-  assert.ok(mock.queries.some((q) => /DELETE FROM grading_results WHERE batch_id/.test(q.sql)));
-  mock.check();
-});
-
-test("stale paper-group lease cannot write results or settle a batch", async () => {
-  const mock = loadDb([rowStep(/SELECT id FROM scan_batches .*FOR UPDATE/, [{ id: batchId }]), rowStep(/j\.job_kind = 'paper_group'.*FOR UPDATE OF j/)]);
-  assert.equal(await mock.db.completePaperGroupJob({ ...job, studentId }, grade), false);
-  assert.ok(!mock.queries.some((q) => /^(INSERT|UPDATE|DELETE)/.test(q.sql)));
-  mock.check();
-});
-
-test("sub score edit rolls the total up to the parent question and settles review state", async () => {
-  const resultId = id(50), subResultId = id(60);
-  const mock = loadDb([
-    recordStep(),
-    rowStep(/SELECT gs\.\*, r\.needs_review AS result_needs_review/, [{ id: subResultId, result_id: resultId, max_score: "5", needs_review: true }]),
-    { match: /UPDATE grading_sub_results SET final_score = \$2, reviewed = true, needs_review = false/, run: (v) => {
-      assert.deepEqual(v, [subResultId, 3.5]); return [];
-    } },
-    rowStep(/SELECT COALESCE\(SUM\(COALESCE\(final_score, score, 0\)\), 0\) AS total/, [{ total: "7.5", pending: false }]),
-    { match: /UPDATE grading_results SET score = \$2, final_score = \$2, needs_review = \$3/, run: (v) => {
-      assert.deepEqual(v, [resultId, 7.5, false]); return [];
-    } },
-    rowStep(/UPDATE scan_batches b SET status = CASE/),
-  ]);
-  assert.deepEqual(await mock.db.saveDeskSubScore({ examId, studentId, subResultId, score: 3.5 }, "teacher-A"), { score: 7.5, needsReview: false });
-  assert.equal(mock.queries.at(-1).sql, "COMMIT"); mock.check();
-});
-
-test("sub score above its maximum is rejected before any write", async () => {
-  const mock = loadDb([recordStep(), rowStep(/SELECT gs\.\*, r\.needs_review AS result_needs_review/, [{ id: id(60), result_id: id(50), max_score: "5" }])]);
-  await assert.rejects(mock.db.saveDeskSubScore({ examId, studentId, subResultId: id(60), score: 6 }, "teacher-A"), { statusCode: 400 });
-  assert.equal(mock.queries.at(-1).sql, "ROLLBACK");
-  assert.ok(!mock.queries.some((q) => /UPDATE grading_sub_results/.test(q.sql))); mock.check();
-});
-
-test("saving manual page regions normalizes boxes against the exam question structure", async () => {
-  const questionId = id(20), subA = id(40), subB = id(41);
-  const mock = loadDb([
-    recordStep(),
-    rowStep(/SELECT id FROM scanned_pages WHERE batch_id = \$1 AND student_id = \$2 AND page_no = \$3/, [{ id: pageId }]),
-    rowStep(/FROM exam_questions q LEFT JOIN exam_sub_questions/, [{ id: questionId, question_no: "1", title: "Q1", max_score: "5", question_type: "解答", subs: [
-      { id: subA, label: "(1)", maxScore: "3", ordinal: 0 }, { id: subB, label: "(2)", maxScore: "2", ordinal: 1 },
-    ] }]),
-    { match: /INSERT INTO student_page_regions/, run: (v) => {
-      assert.equal(v[3], pageId); assert.equal(v[4], 1);
-      const regions = JSON.parse(v[5]);
-      assert.equal(regions.length, 1);
-      assert.deepEqual(regions[0].bbox, [0.1, 0.2, 0.6, 0.4]);
-      assert.deepEqual(regions[0].subs.map((sub) => sub.subId), [subA, subB]);
-      assert.deepEqual(regions[0].subs[1].bbox, [0.1, 0.45, 0.6, 0.15]);
-      assert.equal(JSON.parse(v[6]).method, "manual");
-      assert.equal(v[7], "manual");
-      return [];
-    } },
-  ]);
-  const output = await mock.db.saveDeskRegions({ examId, studentId, pageNo: 1, regions: [{
-    questionId, bbox: [0.1, 0.2, 0.6, 0.4],
-    subs: [{ subId: subA, bbox: [0.1, 0.2, 0.6, 0.2] }, { subId: subB, bbox: [0.1, 0.45, 0.6, 0.15] }],
-  }] }, "teacher-A");
-  assert.deepEqual(output, { count: 1 });
-  assert.ok(!mock.queries.some((q) => /^(BEGIN|COMMIT)/.test(q.sql))); mock.check();
-});
-
-test("regrading one question enqueues a fresh paper-group job scoped to that question", async () => {
-  const questionId = id(20);
-  const mock = loadDb([
-    recordStep(record({ grading_started_at: new Date() })),
-    rowStep(/SELECT id FROM exam_questions WHERE id = \$1 AND exam_id = \$2/, [{ id: questionId }]),
-    rowStep(/SELECT COALESCE\(MAX\(task_no\), 0\) \+ 1 AS next/, [{ next: 3 }]),
-    rowStep(/SELECT p\.id, r\.regions FROM scanned_pages p/, [{ id: pageId, regions: [{ questionId, bbox: [0.1, 0.2, 0.6, 0.4] }] }]),
-    { match: /INSERT INTO grading_jobs/, run: (v) => {
-      assert.equal(v[3], 3);
-      assert.deepEqual(JSON.parse(v[4]), [pageId]);
-      assert.deepEqual(JSON.parse(v[5]), [questionId]);
-      return [];
-    } },
-    rowStep(/UPDATE scan_batches SET status = 'grading' WHERE id = \$1/),
-  ]);
-  assert.deepEqual(await mock.db.regradeDeskQuestion({ examId, studentId, questionId }, "teacher-A"), {});
-  assert.equal(mock.queries.at(-1).sql, "COMMIT"); mock.check();
-});
-
-test("preflight on a batch without pages reports an empty summary and releases the client", async () => {
-  const mock = loadDb([
-    recordStep(),
-    rowStep(/FROM exam_questions q LEFT JOIN exam_sub_questions/, []),
-    rowStep(/FROM scanned_pages WHERE batch_id = \$1 ORDER BY capture_order, page_no/, []),
-    rowStep(/SELECT \* FROM page_layout_templates/, []),
-    rowStep(/FROM scanned_pages p LEFT JOIN student_page_regions r/, []),
-  ]);
-  assert.deepEqual(await mock.db.preflightDeskBatch({ examId }, "teacher-A", async () => null),
-    { pageNumbers: [], built: [], invalid: 0, check: 0, pages: [] });
-  assert.equal(mock.released, 1); mock.check();
 });
 
 test("schema preserves old crop defaults while enabling unique whole-page jobs and multi-result jobs", () => {
