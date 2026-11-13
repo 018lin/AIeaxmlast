@@ -131,6 +131,9 @@ function fixtures() {
  await click('[data-action=regions][data-student=s1]');await wait(`document.querySelector('#regionDialog').open`);
  await shot('desktop-region-editor',1440,1000);
  ok('Region editor seeds template boxes and splits sub rows',await evaluate(`document.querySelectorAll('.region-box.question').length===1 && document.querySelectorAll('.region-box.sub').length===2 && document.querySelector('#regionChips').textContent.includes('2 小题') && document.querySelector('#regionChips').textContent.includes('待画框')`));
+ await click('[data-action=region-close]');await wait(`!document.querySelector('#regionDialog').open`);
+ ok('Region editor close button dismisses the dialog',await evaluate(`document.querySelector('#regionDialog').open===false`));
+ await click('[data-action=regions][data-student=s1]');await wait(`document.querySelector('#regionDialog').open`);
  await wait(`document.querySelector('#regionImage').complete && document.querySelector('#regionCanvas').getBoundingClientRect().height>100`);
  const canvasRect=await evaluate(`(()=>{const r=document.querySelector('#regionCanvas').getBoundingClientRect();return {x:r.left,y:r.top,w:r.width,h:r.height}})()`);
  const at=(fx,fy)=>({x:Math.round(canvasRect.x+canvasRect.w*fx),y:Math.round(canvasRect.y+canvasRect.h*fy)});

@@ -2260,6 +2260,34 @@ body.is-busy {
   box-shadow: 0 24px 60px rgba(16, 24, 40, .28);
 }
 
+.region-dialog[open] {
+  display: block;
+}
+
+.region-dialog:not([open]) {
+  display: none;
+}
+
+body.region-open {
+  overflow: hidden;
+}
+
+body.region-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1999;
+  background: rgba(16, 24, 40, .55);
+}
+
+body.region-open .region-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  margin: auto;
+  overflow: auto;
+}
+
 .region-dialog::backdrop {
   background: rgba(16, 24, 40, .55);
 }

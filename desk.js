@@ -477,12 +477,24 @@
       selected: regions.find(region => !region.bbox)?.questionId || regions[0]?.questionId || '', drag:null };
     renderRegionEditor();
     const dialog = document.querySelector('#regionDialog');
-    if (dialog && !dialog.open) dialog.showModal();
+    if (dialog) {
+      if (typeof dialog.showModal === 'function') {
+        if (!dialog.open) dialog.showModal();
+      } else {
+        // Older WebKit without <dialog> support: show it as a plain block.
+        dialog.setAttribute('open', '');
+        document.body.classList.add('region-open');
+      }
+    }
     message();
   }
   function closeRegionEditor() {
     const dialog = document.querySelector('#regionDialog');
-    if (dialog?.open) dialog.close();
+    if (dialog) {
+      if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+      dialog.removeAttribute('open');
+    }
+    document.body.classList.remove('region-open');
     state.region = null;
   }
   function selectRegion(questionId) {
@@ -645,15 +657,17 @@
     renderRegionEditor();
   }
   document.addEventListener('click', async event => {
-    const button = event.target.closest('[data-action]'); if (!button || state.busy) return;
+    const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action;
+    // Closing the region editor must work even while a request is in flight.
+    if(action==='region-close') return closeRegionEditor();
+    if(state.busy) return;
     if(action==='logout') { stopCamera(); window.AppAuth.logout(); return; }
     if(action==='refresh') return navigate();
     if(action==='capture-one') return go('capture',state.detail.exam.id,button.dataset.student,pagesPerStudent() > 1 ? button.dataset.page || '' : '');
     if(action==='regions') return busyWork(() => openRegionEditor(button.dataset.student, Number(button.dataset.page) || 1));
     if(action==='paper') return setPaperMode(button.dataset.mode);
     if(action==='paper-page') return setPaperPage(Number(button.dataset.page) || 1);
-    if(action==='region-close') return closeRegionEditor();
     if(action==='region-select') return selectRegion(button.dataset.region);
     if(action==='gallery') { state.fileTarget={...state.photoTarget, route:state.route}; fileInput.value=''; fileInput.click(); return; }
     if(action==='skip') {
