@@ -3751,6 +3751,16 @@ async function listDeskAssignments(account) {
   })) };
 }
 
+function deskResultBBox(value) {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const [x, y, width, height] = value.map(Number);
+  if (![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0 ||
+      x >= 1 || y >= 1 || x + width > 1.001 || y + height > 1.001) {
+    return null;
+  }
+  return [x, y, width, height];
+}
+
 async function getDeskDetail(examId, account) {
   return deskTransaction(async (client) => {
     const record = await deskRecord(client, examId, account);
@@ -3767,12 +3777,13 @@ async function getDeskDetail(examId, account) {
       questions: questions.rows.map((q) => ({ id: q.id, questionNo: q.question_no, maxScore: Number(q.max_score), title: q.title })),
       results: results.rows.map((r) => ({ studentId: r.student_id, questionNo: r.question_no,
         score: Number(r.final_score ?? r.score), maxScore: Number(r.max_score), analysis: r.analysis,
-        suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review })),
+        suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review,
+        bbox: deskResultBBox(r.ai_result?.bbox) })),
     };
   }, true);
 }
 
-async function getDeskImage(examId, studentId, account, thumbnail = false) {
+async function getDeskImage(examId, studentId, account, thumbnail = false, preview = false) {
   studentId = deskId(studentId, "学生ID");
   return deskTransaction(async (client) => {
     const record = await deskRecord(client, examId, account);
@@ -3781,10 +3792,25 @@ async function getDeskImage(examId, studentId, account, thumbnail = false) {
       JOIN uploaded_images i ON i.id = p.image_id WHERE p.batch_id = $1 AND p.student_id = $2`, [record.batch_id, studentId]);
     if (!image.rowCount) throw deskError("该学生尚未拍摄照片。", 400);
     if (thumbnail) {
-      const preview = await sharp(image.rows[0].image_data).rotate().resize({ width: 240, height: 320, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 70 }).toBuffer();
-      return { image: bufferToDataUrl("image/jpeg", preview) };
+      const thumbnailBuffer = await sharp(image.rows[0].image_data).rotate().resize({ width: 240, height: 320, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 70 }).toBuffer();
+      return { image: bufferToDataUrl("image/jpeg", thumbnailBuffer) };
+    }
+    if (preview) {
+      const previewBuffer = await sharp(image.rows[0].image_data).rotate().resize({ width: 1400, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+      return { image: bufferToDataUrl("image/jpeg", previewBuffer) };
     }
     return { image: bufferToDataUrl(image.rows[0].mime_type, image.rows[0].image_data) };
+  }, true);
+}
+
+async function getDeskAnswerImage(examId, account) {
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, examId, account);
+    if (!record.answer_image_id) return { image: "" };
+    const image = await client.query("SELECT mime_type, image_data FROM uploaded_images WHERE id = $1", [record.answer_image_id]);
+    if (!image.rowCount) return { image: "" };
+    const preview = await sharp(image.rows[0].image_data).rotate().resize({ width: 1400, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+    return { image: bufferToDataUrl("image/jpeg", preview) };
   }, true);
 }
 
@@ -3933,7 +3959,7 @@ async function failWholePaperJob(job, message) {
 
 module.exports = {
   createDeskExam, captureDeskPage, confirmDeskPages, updateDeskQuestions, startDeskGrading, retryDeskGrading,
-  listDeskAssignments, getDeskDetail, getDeskImage, assertLegacyMutationAllowed,
+  listDeskAssignments, getDeskDetail, getDeskImage, getDeskAnswerImage, assertLegacyMutationAllowed,
   recoverWholePaperJobs, claimWholePaperJob, renewWholePaperLease, getWholePaperJobPayload,
   completeWholePaperJob, failWholePaperJob, touchWorkerHeartbeat, isWorkerHeartbeatFresh,
   assertBatchOwnership,

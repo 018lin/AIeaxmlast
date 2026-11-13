@@ -108,6 +108,17 @@ test("valid zero score is preserved, feedback is shortened, order follows expect
   assert.equal(checked.questions[0].suggestions.length, 3);
 });
 
+test("question positions are normalized, clamped and invalid values dropped", () => {
+  const raw = resultFor(expected(3));
+  raw.questions[0].bbox = [0.1, 0.2, 0.3, 0.4];
+  raw.questions[1].bbox = { x: 0.8, y: 0.5, width: 0.5, height: 0.4 };
+  raw.questions[2].bbox = [0.1, 0.1, 0, 0.2];
+  const checked = validateWholePaperResult(raw, expected(3));
+  assert.deepEqual(checked.questions[0].bbox, [0.1, 0.2, 0.3, 0.4]);
+  assert.deepEqual(checked.questions[1].bbox, [0.8, 0.5, 0.2, 0.4]);
+  assert.equal(checked.questions[2].bbox, null);
+});
+
 test("question edits reject empty, duplicate and nonnumeric scores", () => {
   for (const value of [[], null, [{ questionNo: "", maxScore: 5 }], [expected(1)[0], expected(1)[0]],
     [{ questionNo: "1", maxScore: "5" }], [{ questionNo: "1", maxScore: NaN }], [{ questionNo: "1", maxScore: 0 }]]) {

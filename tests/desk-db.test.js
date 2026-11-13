@@ -214,11 +214,12 @@ test("exhausted retry returns 409 and never resets attempts", async () => {
 });
 
 test("tenant-scoped desk reads and writes cannot use another teacher's exam", async () => {
-  for (const method of ["getDeskDetail", "getDeskImage", "captureDeskPage", "confirmDeskPages", "updateDeskQuestions", "startDeskGrading", "retryDeskGrading"]) {
+  for (const method of ["getDeskDetail", "getDeskImage", "getDeskAnswerImage", "captureDeskPage", "confirmDeskPages", "updateDeskQuestions", "startDeskGrading", "retryDeskGrading"]) {
     const mock = loadDb([{ match: /e.teacher_account = \$2 AND e.desk_managed/, run: (v) => { assert.equal(v[1], "teacher-B"); return []; } }]);
     let call;
     if (method === "getDeskDetail") call = mock.db[method](examId, "teacher-B");
     else if (method === "getDeskImage") call = mock.db[method](examId, studentId, "teacher-B");
+    else if (method === "getDeskAnswerImage") call = mock.db[method](examId, "teacher-B");
     else call = mock.db[method]({ examId, studentId, captureOrder: 0, pageIds: [pageId], questions }, "teacher-B");
     await assert.rejects(call, { statusCode: 403 }); mock.check();
   }
@@ -323,13 +324,13 @@ test("desk detail is a consistent metadata-only snapshot with short result field
   const mock = loadDb([recordStep(),
     rowStep(/FROM scanned_pages p LEFT JOIN grading_jobs/, [{ id: pageId, student_id: studentId, capture_order: 0, status: "done", error: "" }]),
     rowStep(/SELECT id, question_no, max_score, title/, questionRows),
-    rowStep(/SELECT r\.\*, q.question_no/, [{ student_id: studentId, question_no: "1", final_score: null, score: "4", max_score: "5", analysis: "Good", suggestions: [], ai_result: { knowledge_points: ["Math"] }, needs_review: true }]),
+    rowStep(/SELECT r\.\*, q.question_no/, [{ student_id: studentId, question_no: "1", final_score: null, score: "4", max_score: "5", analysis: "Good", suggestions: [], ai_result: { knowledge_points: ["Math"], bbox: [0.1, 0.2, 0.3, 0.4] }, needs_review: true }]),
   ]);
   const detail = await mock.db.getDeskDetail(examId, "teacher-A");
   assert.deepEqual(Object.keys(detail), ["exam", "batch", "students", "pages", "questions", "results"]);
   assert.deepEqual(detail.students, record().student_order_snapshot);
   assert.deepEqual(detail.pages[0], { id: pageId, studentId, captureOrder: 0, status: "done", error: "" });
-  assert.deepEqual(detail.results[0], { studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true });
+  assert.deepEqual(detail.results[0], { studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, bbox: [0.1, 0.2, 0.3, 0.4] });
   assert.equal(mock.queries[0].sql, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"); mock.check();
 });
 
@@ -338,6 +339,18 @@ test("desk image loads only the requested student's private photo on demand", as
     assert.deepEqual(v, [batchId, studentId]); return [{ mime_type: "image/png", image_data: Buffer.from("synthetic") }];
   } }]);
   assert.deepEqual(await mock.db.getDeskImage(examId, studentId, "teacher-A"), { image: "data:image/png;base64,c3ludGhldGlj" }); mock.check();
+});
+
+test("desk answer image returns a bounded preview of the stored teacher answer", async () => {
+  const sharp = require("sharp");
+  const source = await sharp({ create: { width: 1200, height: 1600, channels: 3, background: "white" } }).png().toBuffer();
+  const mock = loadDb([recordStep(), rowStep(/SELECT mime_type, image_data FROM uploaded_images WHERE id = \$1/, [{ mime_type: "image/png", image_data: source }])]);
+  const { image } = await mock.db.getDeskAnswerImage(examId, "teacher-A");
+  const metadata = await sharp(Buffer.from(image.split(",")[1], "base64")).metadata();
+  assert.equal(metadata.format, "jpeg");
+  assert.equal(metadata.width, 1200);
+  assert.equal(metadata.height, 1600);
+  mock.check();
 });
 
 test("review thumbnails are small JPEGs without changing original images", async () => {

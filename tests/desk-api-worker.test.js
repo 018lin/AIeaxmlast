@@ -17,7 +17,7 @@ async function request(action, { db = {}, method = "POST", payload = {}, account
 }
 
 test("authentication is required before any desk operation", async () => {
-  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-create", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions"]) {
+  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-answer-image", "desk-create", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions"]) {
     assert.equal((await request(action, { account: "" })).status, 401);
   }
 });
@@ -26,7 +26,8 @@ test("desk GET contract is passed through with the authenticated tenant", async 
   for (const [action, method, args, body] of [
     ["desk-list", "listDeskAssignments", ["teacher-A"], { assignments: [] }],
     ["desk-detail", "getDeskDetail", ["exam", "teacher-A"], { exam: { id: "exam", name: "Test" }, batch: { id: "batch", status: "draft" }, students: [], pages: [], questions: [], results: [] }],
-    ["desk-image", "getDeskImage", ["exam", "student", "teacher-A", false], { image: "synthetic-image" }],
+    ["desk-image", "getDeskImage", ["exam", "student", "teacher-A", false, false], { image: "synthetic-image" }],
+    ["desk-answer-image", "getDeskAnswerImage", ["exam", "teacher-A"], { image: "synthetic-answer" }],
   ]) {
     const result = await request(action, { method: "GET", db: { [method]: async (...actual) => { assert.deepEqual(actual, args); return body; } } });
     assert.deepEqual(result, { status: 200, body });
