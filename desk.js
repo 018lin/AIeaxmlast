@@ -20,6 +20,39 @@
   const route = () => location.hash.slice(1).split('/');
   const editable = () => ['draft', 'ready', 'capturing', 'confirmed'].includes(state.detail?.batch.status);
   function message(text = '') { notice.textContent = text; notice.hidden = !text; }
+  const busyOverlay = document.querySelector('#busyOverlay');
+  const busyRing = busyOverlay.querySelector('.busy-ring-value');
+  const busyPercent = document.querySelector('#busyPercent');
+  const busyLabel = document.querySelector('#busyLabel');
+  const RING_LENGTH = 2 * Math.PI * 58;
+  let busyTimer = null;
+  function startBusy() {
+    clearInterval(busyTimer);
+    let progress = 0.06;
+    const stages = [[0.62, '正在识别题目与分值…'], [0.86, '正在整理题目清单…']];
+    const paint = () => {
+      busyRing.style.strokeDashoffset = String(RING_LENGTH * (1 - progress));
+      busyPercent.textContent = `${Math.round(progress * 100)}%`;
+      busyLabel.textContent = stages.find(([threshold]) => progress >= threshold)?.[1] || '正在上传标准答案…';
+    };
+    busyRing.style.strokeDasharray = String(RING_LENGTH);
+    paint();
+    busyOverlay.hidden = false;
+    document.body.classList.add('is-busy');
+    busyTimer = setInterval(() => { progress += (0.9 - progress) * 0.06; paint(); }, 320);
+  }
+  function finishBusy() {
+    clearInterval(busyTimer);
+    busyRing.style.strokeDashoffset = '0';
+    busyPercent.textContent = '100%';
+    busyLabel.textContent = '识别完成';
+    return new Promise(resolve => setTimeout(resolve, 260));
+  }
+  function stopBusy() {
+    clearInterval(busyTimer);
+    busyOverlay.hidden = true;
+    document.body.classList.remove('is-busy');
+  }
   async function api(action, payload, query = {}) {
     const params = new URLSearchParams({ action, ...query });
     const response = await window.AppAuth.request(`/api/mvp?${params}`, payload === undefined ? {} : { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
@@ -51,9 +84,10 @@
     const page = pageFor(student.id), results = resultsFor(student.id), done = isDone(student.id);
     const score = results.reduce((sum, item) => sum + Number(item.score || 0), 0);
     const needsReview = results.filter(item => item.needsReview).length;
+    const waiting = Boolean(page) && !done && !page.error && activeStatus(page.status);
     const status = !page ? '未拍' : page.error ? page.error : done ? (needsReview ? `${needsReview} 题待复核` : '已完成') : review ? '已拍 · 请核对' : (statusText[page.status] || '已拍');
     const thumb = review ? (page ? `<img class="thumb" data-thumb="${esc(student.id)}" alt="${esc(student.name)}的作业照片">` : '<span class="thumb thumb-empty" aria-hidden="true">未拍</span>') : '';
-    return `<div class="student${page ? '' : ' is-missing'}"><span class="student-no">${esc(student.studentNo || '—')}</span>${thumb}<div class="identity"><strong>${esc(student.name)}</strong><small${page?.error ? ` title="${esc(page.error)}"` : ''}${done && needsReview ? ' class="needs-review"' : ''}>${esc(status)}</small></div>${done && !review ? `<span class="score">${score}<small>分</small></span>` : ''}<div class="actions">${page ? `<button data-action="photo" data-student="${esc(student.id)}">看照片</button>` : ''}${review && editable() ? `<button data-action="capture-one" data-student="${esc(student.id)}">${page ? '替换' : '补拍'}</button>` : done ? `<a class="button" href="#student/${esc(state.detail.exam.id)}/${esc(student.id)}">详情</a>` : ''}</div></div>`;
+    return `<div class="student${page ? '' : ' is-missing'}${waiting ? ' is-grading' : ''}"><span class="student-no">${esc(student.studentNo || '—')}</span>${thumb}<div class="identity"><strong>${esc(student.name)}</strong>${waiting ? '' : `<small${page?.error ? ` title="${esc(page.error)}"` : ''}${done && needsReview ? ' class="needs-review"' : ''}>${esc(status)}</small>`}</div>${done && !review ? `<span class="score">${score}<small>分</small></span>` : ''}<div class="actions">${page ? `<button data-action="photo" data-student="${esc(student.id)}">看照片</button>` : ''}${review && editable() ? `<button data-action="capture-one" data-student="${esc(student.id)}">${page ? '替换' : '补拍'}</button>` : done ? `<a class="button" href="#student/${esc(state.detail.exam.id)}/${esc(student.id)}">详情</a>` : ''}</div>${waiting ? `<span class="student-progress" role="progressbar" aria-label="${esc(statusText[page.status] || '批改中')}"><i></i></span>` : ''}</div>`;
   }
   function renderReview() {
     const d = state.detail, count = d.pages.length;
@@ -288,9 +322,13 @@
     busyWork(async()=>{
       if(form.id==='createForm') {
         if(!state.answer) throw new Error('请先选择一张清晰的标准答案图片。');
-        message('正在识别标准答案，请稍候…');
-        const created=await api('desk-create',{classId:fields.get('classId'),name:fields.get('name'),examDate:fields.get('examDate'),answerImage:state.answer});
-        state.busy=false; go('capture',created.examId);
+        startBusy();
+        try {
+          const created=await api('desk-create',{classId:fields.get('classId'),name:fields.get('name'),examDate:fields.get('examDate'),answerImage:state.answer});
+          await finishBusy();
+          stopBusy();
+          state.busy=false; go('capture',created.examId);
+        } catch (error) { stopBusy(); throw error; }
       }
       if(form.id==='questionForm') {
         const questions=[...form.querySelectorAll('.question-row')].map(row=>({questionNo:row.querySelector('[name=questionNo]').value.trim(),title:row.querySelector('[name=title]').value.trim(),maxScore:Number(row.querySelector('[name=maxScore]').value)}));
