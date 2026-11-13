@@ -3626,7 +3626,7 @@ async function cropRegionDataUrl(prepared, box) {
 async function getExamStructure(executor, examId) {
   const result = await executor.query(`
     SELECT q.id, q.question_no, q.title, q.max_score, q.question_type, q.sub_question_count,
-      COALESCE(json_agg(json_build_object('id', s.id, 'label', s.label, 'maxScore', s.max_score, 'ordinal', s.ordinal)
+      COALESCE(jsonb_agg(jsonb_build_object('id', s.id, 'label', s.label, 'maxScore', s.max_score, 'ordinal', s.ordinal)
         ORDER BY s.ordinal) FILTER (WHERE s.id IS NOT NULL), '[]'::jsonb) AS subs
     FROM exam_questions q
     LEFT JOIN exam_sub_questions s ON s.question_id = q.id
@@ -4186,7 +4186,7 @@ async function getDeskDetail(examId, account) {
       LEFT JOIN student_page_regions r ON r.scanned_page_id = p.id
       WHERE p.batch_id = $1 ORDER BY p.capture_order, p.page_no`, [record.batch_id]);
     const questions = await client.query(`SELECT q.id, q.question_no, q.max_score, q.title, q.question_type,
-      COALESCE(json_agg(json_build_object('id', s.id, 'label', s.label, 'maxScore', s.max_score, 'ordinal', s.ordinal)
+      COALESCE(jsonb_agg(jsonb_build_object('id', s.id, 'label', s.label, 'maxScore', s.max_score, 'ordinal', s.ordinal)
         ORDER BY s.ordinal) FILTER (WHERE s.id IS NOT NULL), '[]'::jsonb) AS subs
       FROM exam_questions q LEFT JOIN exam_sub_questions s ON s.question_id = q.id
       WHERE q.exam_id = $1 GROUP BY q.id ORDER BY q.created_at, q.question_no`, [record.exam_id]);

@@ -88,10 +88,13 @@ test("answer locate caches one crop per question and per sub question", async ()
   const mock = loadDb([
     recordStep(),
     rowStep(/SELECT mime_type, image_data FROM uploaded_images WHERE id = \$1/, [{ mime_type: "image/png", image_data: png }]),
-    rowStep(/SELECT q.id, q.question_no, q.title, q.max_score, q.question_type, q.sub_question_count/, [{
-      id: id(20), question_no: "1", title: "Q1", max_score: "5", question_type: "解答", sub_question_count: 2,
-      subs: [{ id: id(30), label: "(1)", maxScore: 2, ordinal: 0 }, { id: id(31), label: "(2)", maxScore: 3, ordinal: 1 }],
-    }]),
+    { match: /SELECT q.id, q.question_no, q.title, q.max_score, q.question_type, q.sub_question_count/, run: (v, sql) => {
+      assert.match(sql, /jsonb_agg/);
+      return [{
+        id: id(20), question_no: "1", title: "Q1", max_score: "5", question_type: "解答", sub_question_count: 2,
+        subs: [{ id: id(30), label: "(1)", maxScore: 2, ordinal: 0 }, { id: id(31), label: "(2)", maxScore: 3, ordinal: 1 }],
+      }];
+    } },
     rowStep(/DELETE FROM uploaded_images i USING exam_questions q/),
     rowStep(/DELETE FROM uploaded_images i USING exam_sub_questions s/),
     rowStep(/INSERT INTO uploaded_images/), rowStep(/SET desk_private = true/),
@@ -368,7 +371,7 @@ test("heartbeat cannot revive an expired lease", async () => {
 test("desk detail is a consistent metadata-only snapshot with short result fields", async () => {
   const mock = loadDb([recordStep(),
     rowStep(/FROM scanned_pages p LEFT JOIN LATERAL/, [{ id: pageId, student_id: studentId, capture_order: 0, page_no: 1, status: "done", error: "", region_status: "ok", region_issue: "", region_confidence: "0.92" }]),
-    rowStep(/SELECT q\.id, q\.question_no, q\.max_score, q\.title, q\.question_type/, questionRows),
+    { match: /SELECT q\.id, q\.question_no, q\.max_score, q\.title, q\.question_type/, run: (v, sql) => { assert.match(sql, /jsonb_agg/); return questionRows; } },
     rowStep(/SELECT r\.\*, q\.question_no/, [{ id: id(40), student_id: studentId, question_id: id(20), question_no: "1", question_type: "", final_score: null, score: "4", max_score: "5", analysis: "Good", suggestions: [], ai_result: { knowledge_points: ["Math"], bbox: [0.1, 0.2, 0.3, 0.4] }, needs_review: true }]),
     rowStep(/FROM grading_sub_results WHERE batch_id/, []),
   ]);
