@@ -506,6 +506,20 @@ main {
   margin-top: 14px;
 }
 
+/* 待复核题目已置顶时的说明条 */
+.result-note {
+  margin: 0;
+  padding: 7px 12px;
+  border: 1px solid #f6d7c0;
+  border-radius: 10px;
+  color: #b54708;
+  background: var(--warning-soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.5;
+}
+
 /* ---------- original paper viewer ---------- */
 
 .paper-viewer {

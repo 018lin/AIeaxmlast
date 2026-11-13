@@ -227,8 +227,16 @@
   function reviewForm(r) {
     return `<form class="review-form" data-question="${esc(r.questionNo)}"><label class="review-field"><span>得分</span><input name="score" type="number" inputmode="decimal" min="0" max="${Number(r.maxScore)}" step="any" required value="${r.score == null ? '' : Number(r.score)}" aria-label="第 ${esc(r.questionNo)} 题得分"></label><label class="review-field grow"><span>教师评语</span><input name="comment" maxlength="500" placeholder="选填，补充说明" value="${esc(r.teacherComment || '')}" aria-label="第 ${esc(r.questionNo)} 题教师评语"></label><button type="submit">保存复核</button></form>`;
   }
+  // 待复核的题目优先排在最前，其余保持原始题号顺序（排序稳定）。
+  function orderedResults(studentId) {
+    return resultsFor(studentId).slice().sort((a, b) => Number(!a.needsReview) - Number(!b.needsReview));
+  }
   function resultListHtml(studentId) {
-    return resultsFor(studentId).map(r => `<section class="result-question" data-question="${esc(r.questionNo)}"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : r.reviewed ? '<span class="badge good">已复核</span>' : ''}<em class="review-hint">点按复核</em></span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small>${reviewForm(r)}</section>`).join('') || '<p class="empty">还没有批改结果。</p>';
+    const results = orderedResults(studentId);
+    if (!results.length) return '<p class="empty">还没有批改结果。</p>';
+    const pending = results.filter(r => r.needsReview).length;
+    const note = pending ? `<p class="result-note">${pending} 题待复核，已排在前面。</p>` : '';
+    return note + results.map(r => `<section class="result-question" data-question="${esc(r.questionNo)}"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : r.reviewed ? '<span class="badge good">已复核</span>' : ''}<em class="review-hint">点按复核</em></span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small>${reviewForm(r)}</section>`).join('');
   }
   function renderStudentResults(studentId) {
     const open = new Set([...app.querySelectorAll('.result-question.is-open')].map(card => card.dataset.question));
