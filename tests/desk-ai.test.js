@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { gradeWholePaper, recognizeAnswerQuestions, validateWholePaperResult, validateDeskQuestions } = require("../lib/ai-grader");
+const { gradeWholePaper, recognizeAnswerQuestions, sanitizePaperBoxes, validateWholePaperResult, validateDeskQuestions } = require("../lib/ai-grader");
 
 const expected = (count) => Array.from({ length: count }, (_, i) => ({ questionNo: String(i + 1), title: "Test", maxScore: 5 }));
 const resultFor = (questions) => ({ questions: questions.map((q) => ({ question_no: q.questionNo, max_score: q.maxScore, score: 3, confidence: 0.9, analysis: "Feedback" })) });
@@ -259,6 +259,32 @@ test("valid zero score is preserved, feedback is shortened, order follows expect
   assert.equal(checked.questions[0].score, 0);
   assert.equal(checked.questions[0].analysis.length, 240);
   assert.equal(checked.questions[0].suggestions.length, 3);
+});
+
+test("unreliable overlays are hidden entirely instead of drawn in the wrong place", () => {
+  const base = () => {
+    const raw = resultFor(expected(3));
+    raw.questions.forEach((question, index) => { question.bbox = [0.05, 0.1 + index * 0.1, 0.4, 0.05]; });
+    return raw;
+  };
+  const reliable = validateWholePaperResult(base(), expected(3));
+  assert.deepEqual(sanitizePaperBoxes(reliable.questions).map((q) => q.bbox),
+    [[0.05, 0.1, 0.4, 0.05], [0.05, 0.2, 0.4, 0.05], [0.05, 0.3, 0.4, 0.05]]);
+
+  const overlap = base();
+  overlap.questions[1].bbox = [0.05, 0.11, 0.4, 0.05];
+  assert.deepEqual(sanitizePaperBoxes(validateWholePaperResult(overlap, expected(3)).questions).map((q) => q.bbox),
+    [null, null, null]);
+
+  const outOfOrder = base();
+  outOfOrder.questions[2].bbox = [0.05, 0.15, 0.4, 0.05];
+  assert.deepEqual(sanitizePaperBoxes(validateWholePaperResult(outOfOrder, expected(3)).questions).map((q) => q.bbox),
+    [null, null, null]);
+
+  const partial = base();
+  partial.questions[0].bbox = null;
+  assert.deepEqual(sanitizePaperBoxes(validateWholePaperResult(partial, expected(3)).questions).map((q) => q.bbox),
+    [null, null, null]);
 });
 
 test("question positions are normalized, clamped and invalid values dropped", () => {

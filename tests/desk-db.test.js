@@ -306,6 +306,20 @@ test("completion persists review-only questions with a null score", async () => 
   mock.check();
 });
 
+test("completion hides an inconsistent overlay before writing ai_result", async () => {
+  const boxed = { result: { questions: [
+    { question_no: "1", max_score: 5, score: 3, bbox: [0.05, 0.1, 0.4, 0.05] },
+    { question_no: "2", max_score: 10, score: 4, bbox: [0.05, 0.11, 0.4, 0.05] },
+  ] }, model: "mock" };
+  const mock = loadDb([...completionSteps(),
+    { match: /INSERT INTO grading_results/, run: (v) => { assert.equal(JSON.parse(v[11]).bbox, null); return []; } },
+    rowStep(/INSERT INTO grading_results/), rowStep(/SET status = 'done'.*overall_feedback/),
+    rowStep(/WHEN EXISTS .*'pending', 'running'/),
+  ]);
+  assert.equal(await mock.db.completeWholePaperJob(job, boxed), true);
+  mock.check();
+});
+
 test("partial result write failure rolls back all results and completion state", async () => {
   const mock = loadDb([...completionSteps(), rowStep(/INSERT INTO grading_results/),
     { match: /INSERT INTO grading_results/, run: () => { throw new Error("second insert failed"); } },
@@ -357,6 +371,21 @@ test("desk detail keeps ungraded questions as null instead of zero", async () =>
   const detail = await mock.db.getDeskDetail(examId, "teacher-A");
   assert.equal(detail.results[0].score, null);
   assert.equal(detail.results[0].needsReview, true);
+  mock.check();
+});
+
+test("desk detail validates boxes per student, not across the class", async () => {
+  const otherStudent = id(9);
+  const mock = loadDb([recordStep(),
+    rowStep(/FROM scanned_pages p LEFT JOIN grading_jobs/, [{ id: pageId, student_id: studentId, capture_order: 0, status: "done", error: "" }]),
+    rowStep(/SELECT id, question_no, max_score, title/, questionRows),
+    rowStep(/SELECT r\.\*, q\.question_no/, [
+      { student_id: studentId, question_no: "1", score: "4", max_score: "5", analysis: "", suggestions: [], ai_result: { bbox: [0.1, 0.1, 0.3, 0.05] }, needs_review: false },
+      { student_id: otherStudent, question_no: "1", score: "3", max_score: "5", analysis: "", suggestions: [], ai_result: { bbox: [0.1, 0.1, 0.3, 0.05] }, needs_review: false },
+    ]),
+  ]);
+  const detail = await mock.db.getDeskDetail(examId, "teacher-A");
+  assert.deepEqual(detail.results.map((r) => r.bbox), [[0.1, 0.1, 0.3, 0.05], [0.1, 0.1, 0.3, 0.05]]);
   mock.check();
 });
 

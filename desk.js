@@ -175,7 +175,7 @@
     stage.innerHTML = `<div class="paper-frame"><img class="paper-image" src="${source}" alt="${esc(student?.name || '')}的答卷">${boxes}</div>`;
     if (hint) hint.textContent = boxes
       ? '框内为题号与得分：绿色正确、橙色部分正确、红色错误。'
-      : resultsFor(paper.studentId).length ? '本次批改未记录题目位置，暂无法在图上框题。' : '';
+      : resultsFor(paper.studentId).length ? '本次未能可靠定位题目位置，已隐藏标注；请以逐题得分和评语为准。' : '';
   }
   function setPaperMode(mode) {
     if (!state.paper || !['student','answer'].includes(mode)) return;

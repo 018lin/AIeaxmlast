@@ -4,7 +4,7 @@ const { randomUUID } = require("crypto");
 const { Pool } = require("pg");
 const sharp = require("sharp");
 const XLSX = require("xlsx");
-const { validateDeskQuestions, validateWholePaperResult } = require("./lib/ai-grader");
+const { validateDeskQuestions, validateWholePaperResult, sanitizePaperBoxes } = require("./lib/ai-grader");
 const { analyzeAnswerLayout, alignBoxes } = require("./lib/answer-layout");
 
 const MASTERY_MASTERED = 0.85;
@@ -3771,18 +3771,28 @@ async function getDeskDetail(examId, account) {
     const questions = await client.query("SELECT id, question_no, max_score, title FROM exam_questions WHERE exam_id = $1 ORDER BY created_at, question_no", [record.exam_id]);
     const results = await client.query(`SELECT r.*, q.question_no FROM grading_results r
       JOIN exam_questions q ON q.id = r.question_id WHERE r.batch_id = $1 ORDER BY q.created_at, q.question_no`, [record.batch_id]);
+    const mappedResults = results.rows.map((r) => {
+      const score = r.final_score ?? r.score;
+      return { studentId: r.student_id, questionNo: r.question_no,
+        score: score === null || score === undefined ? null : Number(score), maxScore: Number(r.max_score), analysis: r.analysis,
+        suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review,
+        bbox: deskResultBBox(r.ai_result?.bbox) };
+    });
+    const safeByStudent = new Map();
+    for (const result of mappedResults) {
+      if (!safeByStudent.has(result.studentId)) safeByStudent.set(result.studentId, []);
+      safeByStudent.get(result.studentId).push(result);
+    }
+    for (const items of safeByStudent.values()) {
+      const safeBoxes = sanitizePaperBoxes(items.map((r) => ({ questionNo: r.questionNo, bbox: r.bbox })));
+      items.forEach((r, index) => { r.bbox = safeBoxes[index].bbox; });
+    }
     return {
       exam: { id: record.exam_id, name: record.name }, batch: { id: record.batch_id, status: record.status },
       students: record.student_order_snapshot,
       pages: pages.rows.map((p) => ({ id: p.id, studentId: p.student_id, captureOrder: p.capture_order, status: p.status, error: p.error })),
       questions: questions.rows.map((q) => ({ id: q.id, questionNo: q.question_no, maxScore: Number(q.max_score), title: q.title })),
-      results: results.rows.map((r) => {
-        const score = r.final_score ?? r.score;
-        return { studentId: r.student_id, questionNo: r.question_no,
-          score: score === null || score === undefined ? null : Number(score), maxScore: Number(r.max_score), analysis: r.analysis,
-          suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review,
-          bbox: deskResultBBox(r.ai_result?.bbox) };
-      }),
+      results: mappedResults,
     };
   }, true);
 }
@@ -3799,6 +3809,7 @@ async function refinedStudentBoxes(client, batchId, studentId, imageBuffer) {
   } catch {
     positioned = entries;
   }
+  positioned = sanitizePaperBoxes(positioned);
   return Object.fromEntries(positioned.filter((entry) => entry.bbox).map((entry) => [entry.questionNo, entry.bbox]));
 }
 
@@ -3949,8 +3960,9 @@ async function completeWholePaperJob(job, grade) {
     const expected = await client.query("SELECT id, question_no, title, max_score FROM exam_questions WHERE exam_id = $1", [row.exam_id]);
     const questions = expected.rows.map((q) => ({ id: q.id, questionNo: q.question_no, title: q.title, maxScore: Number(q.max_score) }));
     const result = validateWholePaperResult(grade.result, questions);
+    const resultQuestions = sanitizePaperBoxes(result.questions);
     const questionMap = new Map(questions.map((q) => [q.questionNo, q.id]));
-    for (const item of result.questions) {
+    for (const item of resultQuestions) {
       await client.query(`INSERT INTO grading_results
         (id, job_id, batch_id, exam_id, student_id, question_id, score, max_score, analysis,
          suggestions, deductions, ai_result, confidence, needs_review)
