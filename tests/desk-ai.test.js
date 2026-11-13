@@ -11,6 +11,9 @@ function mockProvider(t, respond) {
     const body = JSON.parse(options.body);
     calls.push(body);
     const reply = respond(body, calls.length);
+    if (reply && reply.reasoningOnly) {
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "", reasoning_content: "thinking only" } }] }) };
+    }
     if (reply && reply.fail) {
       return { ok: false, status: reply.fail.status || 500, json: async () => ({ error: { message: reply.fail.message || "provider error" } }) };
     }
@@ -75,6 +78,8 @@ for (const count of [1, 15, 16, 20]) {
       const text = body.messages[0].content[0].text;
       const group = JSON.parse(text.split("\n")[2]);
       assert.deepEqual(group, all.slice((index - 1) * size, index * size));
+      assert.equal(body.max_tokens, 16384);
+      assert.deepEqual(body.response_format, { type: "json_object" });
       assert.deepEqual(body.messages[0].content.slice(1).map((c) => c.image_url.url), ["teacher", "student"]);
       return resultFor(group);
     });
@@ -180,6 +185,19 @@ test("a failed chunk with a 5xx status degrades instead of failing the whole pag
   const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all });
   assert.equal(graded.result.questions.length, 16);
   assert.equal(graded.result.questions.filter((q) => q.needs_review).length, 5);
+});
+
+test("a reasoning-only chunk is reported clearly and does not sink the page", async (t) => {
+  const all = expected(16);
+  mockProvider(t, (body, index) => {
+    if (index === 2) return { reasoningOnly: true };
+    return resultFor(JSON.parse(body.messages[0].content[0].text.split("\n")[2]));
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all });
+  assert.equal(graded.result.questions.length, 16);
+  assert.deepEqual(graded.result.questions.filter((q) => q.needs_review).map((q) => q.question_no),
+    ["6", "7", "8", "9", "10"]);
+  assert.match(graded.result.overall_analysis, /推理可能占满输出预算/);
 });
 
 test("a total provider outage still fails the job so it can be retried", async (t) => {
