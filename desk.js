@@ -214,11 +214,15 @@
     return `<form class="review-form" data-question="${esc(r.questionNo)}"><label class="review-field"><span>得分</span><input name="score" type="number" inputmode="decimal" min="0" max="${Number(r.maxScore)}" step="any" required value="${r.score == null ? '' : Number(r.score)}" aria-label="第 ${esc(r.questionNo)} 题得分"></label><label class="review-field grow"><span>教师评语</span><input name="comment" maxlength="500" placeholder="选填，补充说明" value="${esc(r.teacherComment || '')}" aria-label="第 ${esc(r.questionNo)} 题教师评语"></label><button type="submit">保存复核</button></form>`;
   }
   function resultListHtml(studentId) {
-    return resultsFor(studentId).map(r => `<section class="result-question" data-question="${esc(r.questionNo)}"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : r.reviewed ? '<span class="badge good">已复核</span>' : ''}</span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small>${reviewForm(r)}</section>`).join('') || '<p class="empty">还没有批改结果。</p>';
+    return resultsFor(studentId).map(r => `<section class="result-question" data-question="${esc(r.questionNo)}"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : r.reviewed ? '<span class="badge good">已复核</span>' : ''}<em class="review-hint">点按复核</em></span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small>${reviewForm(r)}</section>`).join('') || '<p class="empty">还没有批改结果。</p>';
   }
   function renderStudentResults(studentId) {
+    const open = new Set([...app.querySelectorAll('.result-question.is-open')].map(card => card.dataset.question));
     const list = app.querySelector('.result-list');
-    if (list) list.innerHTML = resultListHtml(studentId);
+    if (list) {
+      list.innerHTML = resultListHtml(studentId);
+      list.querySelectorAll('.result-question').forEach(card => card.classList.toggle('is-open', open.has(card.dataset.question)));
+    }
     const score = app.querySelector('.heading .score');
     if (score) {
       const { total, max, scored } = studentScore(studentId);
@@ -414,6 +418,11 @@
         await api('desk-questions',{examId:state.detail.exam.id,questions}); state.questionDrafts.delete(state.detail.exam.id); state.busy=false; await navigate(); message('题目调整已保存，请重新核对后开始批改。');
       }
     });
+  });
+  app.addEventListener('click', event => {
+    const card = event.target.closest('.result-question');
+    if (!card || event.target.closest('form, button, input, label, a')) return;
+    card.classList.toggle('is-open');
   });
   document.querySelector('#closePhoto').onclick=()=>document.querySelector('#photoDialog').close();
   let holdTimer;
