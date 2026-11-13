@@ -26,6 +26,7 @@ Vercel 是请求级的无服务器环境，函数执行完进程就回收，跑�
   package.json
   node_modules/        # 只装 pg / sharp / xlsx
   lib/ai-grader.js
+  lib/answer-layout.js
   lib/whole-paper-worker.js
   .env
 ```
@@ -61,11 +62,11 @@ cd /opt/scan-grading-worker && node --env-file=.env -e \
 服务端跑的是 `/opt/scan-grading-worker` 里的副本，**不随 git push 自动更新**。
 修改以下任一文件后，需要重新上传并重启：
 
-`worker.js`、`db.js`、`schema.sql`、`lib/whole-paper-worker.js`、`lib/ai-grader.js`（依赖变化时还有 `package.json`）
+`worker.js`、`db.js`、`schema.sql`、`lib/whole-paper-worker.js`、`lib/ai-grader.js`、`lib/answer-layout.js`（依赖变化时还有 `package.json`）
 
 ```bash
 scp worker.js db.js schema.sql root@43.155.216.162:/opt/scan-grading-worker/
-scp lib/whole-paper-worker.js lib/ai-grader.js root@43.155.216.162:/opt/scan-grading-worker/lib/
+scp lib/whole-paper-worker.js lib/ai-grader.js lib/answer-layout.js root@43.155.216.162:/opt/scan-grading-worker/lib/
 ssh root@43.155.216.162 'systemctl restart scan-grading-worker'
 ```
 
