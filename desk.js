@@ -20,6 +20,26 @@
   const route = () => location.hash.slice(1).split('/');
   const editable = () => ['draft', 'ready', 'capturing', 'confirmed'].includes(state.detail?.batch.status);
   function message(text = '') { notice.textContent = text; notice.hidden = !text; }
+  const gradeProgress = new Map();
+  let gradeTimer = null;
+  function progressValue(key) {
+    if (!gradeProgress.has(key)) gradeProgress.set(key, 6);
+    return gradeProgress.get(key);
+  }
+  function tickProgress() {
+    const bars = [...app.querySelectorAll('[data-progress]')];
+    if (!bars.length) { clearInterval(gradeTimer); gradeTimer = null; return; }
+    for (const bar of bars) {
+      const key = bar.dataset.progress, current = progressValue(key);
+      const next = Math.min(92, current + Math.max(0.8, (92 - current) * 0.045));
+      gradeProgress.set(key, next);
+      bar.querySelector('i').style.width = `${next.toFixed(1)}%`;
+      bar.setAttribute('aria-valuenow', String(Math.round(next)));
+    }
+  }
+  function trackProgress() {
+    if (!gradeTimer && app.querySelector('[data-progress]')) gradeTimer = setInterval(tickProgress, 400);
+  }
   const busyOverlay = document.querySelector('#busyOverlay');
   const busyRing = busyOverlay.querySelector('.busy-ring-value');
   const busyPercent = document.querySelector('#busyPercent');
@@ -85,19 +105,24 @@
     const score = results.reduce((sum, item) => sum + Number(item.score || 0), 0);
     const needsReview = results.filter(item => item.needsReview).length;
     const waiting = Boolean(page) && !done && !page.error && activeStatus(page.status);
+    const progressKey = `${state.detail.exam.id}:${student.id}`;
+    if (!waiting) gradeProgress.delete(progressKey);
+    const percent = waiting ? progressValue(progressKey) : 0;
     const status = !page ? '未拍' : page.error ? page.error : done ? (needsReview ? `${needsReview} 题待复核` : '已完成') : review ? '已拍 · 请核对' : (statusText[page.status] || '已拍');
     const thumb = review ? (page ? `<img class="thumb" data-thumb="${esc(student.id)}" alt="${esc(student.name)}的作业照片">` : '<span class="thumb thumb-empty" aria-hidden="true">未拍</span>') : '';
-    return `<div class="student${page ? '' : ' is-missing'}${waiting ? ' is-grading' : ''}"><span class="student-no">${esc(student.studentNo || '—')}</span>${thumb}<div class="identity"><strong>${esc(student.name)}</strong>${waiting ? '' : `<small${page?.error ? ` title="${esc(page.error)}"` : ''}${done && needsReview ? ' class="needs-review"' : ''}>${esc(status)}</small>`}</div>${done && !review ? `<span class="score">${score}<small>分</small></span>` : ''}<div class="actions">${page ? `<button data-action="photo" data-student="${esc(student.id)}">看照片</button>` : ''}${review && editable() ? `<button data-action="capture-one" data-student="${esc(student.id)}">${page ? '替换' : '补拍'}</button>` : done ? `<a class="button" href="#student/${esc(state.detail.exam.id)}/${esc(student.id)}">详情</a>` : ''}</div>${waiting ? `<span class="student-progress" role="progressbar" aria-label="${esc(statusText[page.status] || '批改中')}"><i></i></span>` : ''}</div>`;
+    return `<div class="student${page ? '' : ' is-missing'}${waiting ? ' is-grading' : ''}"><span class="student-no">${esc(student.studentNo || '—')}</span>${thumb}<div class="identity"><strong>${esc(student.name)}</strong>${waiting ? '' : `<small${page?.error ? ` title="${esc(page.error)}"` : ''}${done && needsReview ? ' class="needs-review"' : ''}>${esc(status)}</small>`}</div>${done && !review ? `<span class="score">${score}<small>分</small></span>` : ''}<div class="actions">${page ? `<button data-action="photo" data-student="${esc(student.id)}">看照片</button>` : ''}${review && editable() ? `<button data-action="capture-one" data-student="${esc(student.id)}">${page ? '替换' : '补拍'}</button>` : done ? `<a class="button" href="#student/${esc(state.detail.exam.id)}/${esc(student.id)}">详情</a>` : ''}</div>${waiting ? `<span class="student-progress" data-progress="${esc(progressKey)}" role="progressbar" aria-label="批改进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(percent)}"><i style="width:${percent.toFixed(1)}%"></i></span>` : ''}</div>`;
   }
   function renderReview() {
     const d = state.detail, count = d.pages.length;
     const draft = state.questionDrafts.get(d.exam.id), questions = draft || d.questions;
     app.innerHTML = `${back()}<div class="heading"><div><h1>核对照片</h1><p>${esc(d.exam.name)} · 已拍 ${count} / 未拍 ${d.students.length-count}</p></div></div><p class="muted roster-note">逐人核对姓名与照片；缺交的学生保留未拍，不会把后面的照片前移。</p><div class="roster review"><div class="roster-head"><span>学号</span><span>照片</span><span>姓名</span><span class="end">核对</span></div>${d.students.map(student => studentRow(student, true)).join('')}</div>${editable() ? `<details class="question-editor"><summary>核对题目 · ${questions.length} 题 · 满分 ${questions.reduce((sum,q)=>sum+Number(q.maxScore),0)} 分</summary><p>勾选多题后可合并，合并题号请保留原题号信息。</p><form id="questionForm" data-dirty="${Boolean(draft)}"><div id="questionRows">${questions.map(q => questionRow(q)).join('')}</div><div class="actions"><button type="button" data-action="merge">合并所选题</button><button type="submit">保存题目调整</button></div></form></details><div class="sticky-actions"><a class="button" href="#capture/${esc(d.exam.id)}">继续拍照</a><button class="primary" data-action="start" ${!count ? 'disabled' : ''}>已核对 ${count} 人，开始批改</button></div>` : `<div class="sticky-actions"><a class="button primary" href="#results/${esc(d.exam.id)}">查看批改进度</a></div>`}`;
+    trackProgress();
   }
   function questionRow(q) { return `<div class="question-row"><input type="checkbox" aria-label="选择合并题目"><input name="questionNo" aria-label="题号" required value="${esc(q.questionNo)}"><input name="title" aria-label="题目说明" value="${esc(q.title)}"><input name="maxScore" aria-label="满分" type="number" min="0.5" max="1000" step="0.5" required value="${Number(q.maxScore)}"><button type="button" data-action="delete-question">删除</button></div>`; }
   function renderResults() {
     const d = state.detail, done = d.students.filter(s => isDone(s.id)).length, failed = d.pages.some(p => p.status === 'failed');
     app.innerHTML = `${back()}<div class="heading"><div><h1>${esc(d.exam.name)}</h1><p>已完成 ${done} 人 · ${d.results.filter(r=>r.needsReview).length} 题待复核</p></div><button data-action="refresh">刷新</button></div>${editable() ? `<div class="actions result-actions"><a class="button primary" href="#capture/${esc(d.exam.id)}">${d.pages.length ? '继续拍照' : '开始拍照'}</a><a class="button" href="#review/${esc(d.exam.id)}">核对照片 (${d.pages.length}/${d.students.length})</a></div>` : `<div class="progress-panel"><div class="progress-copy"><span>批改进度</span><b>${done} / ${d.students.length}</b></div><progress max="${d.pages.length || 1}" value="${done}" aria-label="已完成学生数"></progress><p class="muted">${['done','needs_review','failed'].includes(d.batch.status) ? '批改已结束，可逐人查看每题得分与评语。' : '后台正在批改，可以锁屏或离开，回来后继续查看。'}</p>${failed ? '<button data-action="retry">重试失败作业</button>' : ''}</div>`}<div class="roster results"><div class="roster-head"><span>学号</span><span>姓名</span><span class="end">得分</span><span class="end">操作</span></div>${d.students.map(s=>studentRow(s)).join('')}</div>`;
+    trackProgress();
   }
   function paperBoxes(studentId, positions) {
     return resultsFor(studentId).map(r => {

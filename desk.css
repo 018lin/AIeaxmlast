@@ -961,7 +961,7 @@ input[type="date"] {
 }
 
 .student.is-grading {
-  padding-bottom: 13px;
+  padding-bottom: 14px;
 }
 
 .student-progress {
@@ -969,23 +969,17 @@ input[type="date"] {
   right: 0;
   bottom: 0;
   left: 0;
-  height: 3px;
+  height: 4px;
   overflow: hidden;
   background: var(--brand-soft);
 }
 
 .student-progress i {
   display: block;
-  width: 34%;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #ffb27d, var(--brand) 45%, var(--brand-strong));
-  animation: student-progress-slide 1.5s cubic-bezier(.45, 0, .55, 1) infinite;
-}
-
-@keyframes student-progress-slide {
-  0% { transform: translateX(-105%); }
-  100% { transform: translateX(310%); }
+  background: var(--brand);
+  transition: width .45s ease;
 }
 
 .student:last-child {
@@ -2087,11 +2081,5 @@ body.is-busy {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
-  }
-
-  .student-progress i {
-    width: 45%;
-    margin-left: 27%;
-    animation: none !important;
   }
 }
