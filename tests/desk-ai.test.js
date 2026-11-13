@@ -40,7 +40,24 @@ test("answer recognition uses one teacher-only request and validates explicit sc
     questions: [{ questionNo: "1", title: "Addition", maxScore: 5 }], totalScore: 5,
   });
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].max_tokens, 16384);
+  assert.deepEqual(calls[0].response_format, { type: "json_object" });
   assert.deepEqual(calls[0].messages[0].content.filter((c) => c.type === "image_url").map((c) => c.image_url.url), ["teacher-test-image"]);
+});
+
+test("answer recognition splits examples into sub-questions and drops duplicate parents", async (t) => {
+  mockProvider(t, () => ({ questions: [
+    { question_no: "1", title: "第1题答案", max_score: null },
+    { question_no: "例1", title: "判断题", max_score: null },
+    { question_no: "例1(1)", title: "同类项", max_score: null },
+    { question_no: "例1（1）", title: "重复", max_score: 5 },
+    { question_no: "2", title: "选择题", max_score: "5" },
+    { question_no: "", title: "空题号", max_score: 5 },
+  ] }));
+  const recognized = await recognizeAnswerQuestions("answer");
+  assert.deepEqual(recognized.questions.map((q) => q.questionNo), ["例1(1)", "2"]);
+  assert.deepEqual(recognized.questions.map((q) => q.maxScore), [10, 5]);
+  assert.equal(recognized.totalScore, 15);
 });
 
 test("unmarked teacher answers use an editable ten-point draft without requiring handwritten scores", async (t) => {
