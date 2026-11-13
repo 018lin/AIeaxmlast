@@ -102,7 +102,8 @@
   }
   function studentRow(student, review = false) {
     const page = pageFor(student.id), results = resultsFor(student.id), done = isDone(student.id);
-    const score = results.reduce((sum, item) => sum + Number(item.score || 0), 0);
+    const score = results.reduce((sum, item) => sum + Number(item.score ?? 0), 0);
+    const scored = results.filter(item => item.score != null).length;
     const needsReview = results.filter(item => item.needsReview).length;
     const waiting = Boolean(page) && !done && !page.error && activeStatus(page.status);
     const progressKey = `${state.detail.exam.id}:${student.id}`;
@@ -110,7 +111,7 @@
     const percent = waiting ? progressValue(progressKey) : 0;
     const status = !page ? '未拍' : page.error ? page.error : done ? (needsReview ? `${needsReview} 题待复核` : '已完成') : review ? '已拍 · 请核对' : (statusText[page.status] || '已拍');
     const thumb = review ? (page ? `<img class="thumb" data-thumb="${esc(student.id)}" alt="${esc(student.name)}的作业照片">` : '<span class="thumb thumb-empty" aria-hidden="true">未拍</span>') : '';
-    return `<div class="student${page ? '' : ' is-missing'}${waiting ? ' is-grading' : ''}"><span class="student-no">${esc(student.studentNo || '—')}</span>${thumb}<div class="identity"><strong>${esc(student.name)}</strong>${waiting ? '' : `<small${page?.error ? ` title="${esc(page.error)}"` : ''}${done && needsReview ? ' class="needs-review"' : ''}>${esc(status)}</small>`}</div>${done && !review ? `<span class="score">${score}<small>分</small></span>` : ''}<div class="actions">${page ? `<button data-action="photo" data-student="${esc(student.id)}">看照片</button>` : ''}${review && editable() ? `<button data-action="capture-one" data-student="${esc(student.id)}">${page ? '替换' : '补拍'}</button>` : done ? `<a class="button" href="#student/${esc(state.detail.exam.id)}/${esc(student.id)}">详情</a>` : ''}</div>${waiting ? `<span class="student-progress" data-progress="${esc(progressKey)}" role="progressbar" aria-label="批改进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(percent)}"><i style="width:${percent.toFixed(1)}%"></i></span>` : ''}</div>`;
+    return `<div class="student${page ? '' : ' is-missing'}${waiting ? ' is-grading' : ''}"><span class="student-no">${esc(student.studentNo || '—')}</span>${thumb}<div class="identity"><strong>${esc(student.name)}</strong>${waiting ? '' : `<small${page?.error ? ` title="${esc(page.error)}"` : ''}${done && needsReview ? ' class="needs-review"' : ''}>${esc(status)}</small>`}</div>${done && !review ? `<span class="score">${scored ? `${score}<small>分</small>` : '—'}</span>` : ''}<div class="actions">${page ? `<button data-action="photo" data-student="${esc(student.id)}">看照片</button>` : ''}${review && editable() ? `<button data-action="capture-one" data-student="${esc(student.id)}">${page ? '替换' : '补拍'}</button>` : done ? `<a class="button" href="#student/${esc(state.detail.exam.id)}/${esc(student.id)}">详情</a>` : ''}</div>${waiting ? `<span class="student-progress" data-progress="${esc(progressKey)}" role="progressbar" aria-label="批改进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(percent)}"><i style="width:${percent.toFixed(1)}%"></i></span>` : ''}</div>`;
   }
   function renderReview() {
     const d = state.detail, count = d.pages.length;
@@ -144,8 +145,9 @@
       const bbox = positions?.[r.questionNo] || r.bbox;
       if (!Array.isArray(bbox) || bbox.length !== 4) return '';
       const [x, y, width, height] = bbox.map(Number);
-      const tone = Number(r.score) >= Number(r.maxScore) - 0.001 ? 'good' : Number(r.score) <= 0.001 ? 'bad' : 'part';
-      return `<span class="paper-box ${tone}" style="left:${(x*100).toFixed(2)}%;top:${(y*100).toFixed(2)}%;width:${(width*100).toFixed(2)}%;height:${(height*100).toFixed(2)}%" title="${esc(r.analysis || '')}"><span class="paper-box-label"><b>${esc(r.questionNo)}</b><em>${Number(r.score)}/${Number(r.maxScore)}</em></span></span>`;
+      const scored = r.score == null ? null : Number(r.score);
+      const tone = scored == null ? 'part' : scored >= Number(r.maxScore) - 0.001 ? 'good' : scored <= 0.001 ? 'bad' : 'part';
+      return `<span class="paper-box ${tone}" style="left:${(x*100).toFixed(2)}%;top:${(y*100).toFixed(2)}%;width:${(width*100).toFixed(2)}%;height:${(height*100).toFixed(2)}%" title="${esc(r.analysis || '')}"><span class="paper-box-label"><b>${esc(r.questionNo)}</b><em>${scored == null ? '待复核' : `${scored}/${Number(r.maxScore)}`}</em></span></span>`;
     }).join('');
   }
   function renderPaperStage() {
@@ -203,9 +205,9 @@
   function renderStudent(id) {
     const d = state.detail, student = d.students.find(s=>s.id===id);
     if (!student) throw new Error('名单快照中没有该学生。');
-    const results = resultsFor(id), total = results.reduce((sum,r)=>sum+Number(r.score),0), max = results.reduce((sum,r)=>sum+Number(r.maxScore),0);
+    const results = resultsFor(id), total = results.reduce((sum,r)=>sum+Number(r.score ?? 0),0), max = results.reduce((sum,r)=>sum+Number(r.maxScore),0), scored = results.filter(r=>r.score != null).length;
     state.paper = { studentId:id, mode:'student', student:'', answer:'', loading:true };
-    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><span class="score">${total}<small> / ${max}</small></span></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}</div><div class="result-list">${results.map(r=>`<section class="result-question"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : ''}</span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${Number(r.score)<Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small></section>`).join('') || '<p class="empty">还没有批改结果。</p>'}</div>`;
+    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><span class="score">${scored ? total : '—'}<small> / ${max}</small></span></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}</div><div class="result-list">${results.map(r=>`<section class="result-question"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : ''}</span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small></section>`).join('') || '<p class="empty">还没有批改结果。</p>'}</div>`;
   }
   async function renderCapture(requestedId, token) {
     const d = state.detail;

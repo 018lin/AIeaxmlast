@@ -292,6 +292,20 @@ test("atomic completion stores all per-question results and only then settles ba
   assert.equal(mock.queries.at(-1).sql, "COMMIT"); mock.check();
 });
 
+test("completion persists review-only questions with a null score", async () => {
+  const reviewGrade = { result: { questions: [
+    { question_no: "1", max_score: 5, score: null, confidence: null, needs_review: true, analysis: "待复核" },
+    { question_no: "2", max_score: 10, score: 2, confidence: 0.9, needs_review: false, analysis: "" },
+  ] }, model: "mock" };
+  const mock = loadDb([...completionSteps(),
+    { match: /INSERT INTO grading_results/, run: (v) => { assert.equal(v[6], null); assert.equal(v[13], true); return []; } },
+    rowStep(/INSERT INTO grading_results/), rowStep(/SET status = 'done'.*overall_feedback/),
+    rowStep(/WHEN EXISTS .*'pending', 'running'/),
+  ]);
+  assert.equal(await mock.db.completeWholePaperJob(job, reviewGrade), true);
+  mock.check();
+});
+
 test("partial result write failure rolls back all results and completion state", async () => {
   const mock = loadDb([...completionSteps(), rowStep(/INSERT INTO grading_results/),
     { match: /INSERT INTO grading_results/, run: () => { throw new Error("second insert failed"); } },
@@ -332,6 +346,18 @@ test("desk detail is a consistent metadata-only snapshot with short result field
   assert.deepEqual(detail.pages[0], { id: pageId, studentId, captureOrder: 0, status: "done", error: "" });
   assert.deepEqual(detail.results[0], { studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, bbox: [0.1, 0.2, 0.3, 0.4] });
   assert.equal(mock.queries[0].sql, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"); mock.check();
+});
+
+test("desk detail keeps ungraded questions as null instead of zero", async () => {
+  const mock = loadDb([recordStep(),
+    rowStep(/FROM scanned_pages p LEFT JOIN grading_jobs/, [{ id: pageId, student_id: studentId, capture_order: 0, status: "done", error: "" }]),
+    rowStep(/SELECT id, question_no, max_score, title/, questionRows),
+    rowStep(/SELECT r\.\*, q\.question_no/, [{ student_id: studentId, question_no: "1", final_score: null, score: null, max_score: "5", analysis: "待复核", suggestions: [], ai_result: {}, needs_review: true }]),
+  ]);
+  const detail = await mock.db.getDeskDetail(examId, "teacher-A");
+  assert.equal(detail.results[0].score, null);
+  assert.equal(detail.results[0].needsReview, true);
+  mock.check();
 });
 
 test("desk image loads only the requested student's private photo on demand", async () => {

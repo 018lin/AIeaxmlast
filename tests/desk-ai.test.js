@@ -10,7 +10,12 @@ function mockProvider(t, respond) {
   t.mock.method(globalThis, "fetch", async (_url, options) => {
     const body = JSON.parse(options.body);
     calls.push(body);
-    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(respond(body, calls.length)) } }] }) };
+    const reply = respond(body, calls.length);
+    if (reply && reply.fail) {
+      return { ok: false, status: reply.fail.status || 500, json: async () => ({ error: { message: reply.fail.message || "provider error" } }) };
+    }
+    const content = reply && Object.prototype.hasOwnProperty.call(reply, "raw") ? reply.raw : JSON.stringify(reply);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
   });
   const previous = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "mock-only-not-a-secret";
@@ -19,6 +24,14 @@ function mockProvider(t, respond) {
     else process.env.DEEPSEEK_API_KEY = previous;
   });
   return calls;
+}
+
+function withoutApiKey(t) {
+  const previous = process.env.DEEPSEEK_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  t.after(() => {
+    if (previous !== undefined) process.env.DEEPSEEK_API_KEY = previous;
+  });
 }
 
 test("answer recognition uses one teacher-only request and validates explicit scores", async (t) => {
@@ -75,11 +88,96 @@ test("grading snaps AI boxes to the student's real ink rows", async (t) => {
   assert.ok(tops[2] > 0.64 && tops[2] < 0.7, `third box top ${tops[2]}`);
 });
 
-test("a malformed later chunk rejects the entire paper instead of returning partial results", async (t) => {
+test("a chunk with no usable questions becomes review rows instead of failing the paper", async (t) => {
   const all = expected(16);
-  const calls = mockProvider(t, (_body, index) => index === 2 ? { questions: [] } : resultFor(all.slice(0, 5)));
-  await assert.rejects(gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all }), { statusCode: 502 });
-  assert.equal(calls.length, 2);
+  const calls = mockProvider(t, (body, index) => {
+    if (index === 2) return { questions: [] };
+    return resultFor(JSON.parse(body.messages[0].content[0].text.split("\n")[2]));
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all });
+  assert.equal(calls.length, 4);
+  assert.equal(graded.result.questions.length, 16);
+  const review = graded.result.questions.filter((q) => q.needs_review);
+  assert.deepEqual(review.map((q) => q.question_no), ["6", "7", "8", "9", "10"]);
+  for (const question of review) assert.equal(question.score, null);
+  assert.match(graded.result.overall_analysis, /6、7、8、9、10/);
+});
+
+test("unknown and duplicate question numbers are dropped, never re-mapped by position", async (t) => {
+  mockProvider(t, () => ({ questions: [
+    { question_no: "999", score: 4, max_score: 5, confidence: 0.9 },
+    { question_no: "1", score: 2, max_score: 5, confidence: 0.9 },
+    { question_no: "1", score: 5, max_score: 5, confidence: 0.9 },
+  ] }));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(3) });
+  assert.deepEqual(graded.result.questions.map((q) => [q.question_no, q.score, q.needs_review]),
+    [["1", 2, false], ["2", null, true], ["3", null, true]]);
+  assert.match(graded.result.overall_analysis, /无法匹配的题号 999/);
+  assert.match(graded.result.overall_analysis, /重复返回题号 1/);
+});
+
+test("scores are clamped to the configured maximum and flagged for review", async (t) => {
+  mockProvider(t, () => ({ questions: [
+    { question_no: "1", max_score: 100, score: "99", confidence: "0.9" },
+    { question_no: "2", max_score: 5, score: -3, confidence: 0.9 },
+  ] }));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2) });
+  assert.deepEqual(graded.result.questions.map((q) => [q.score, q.max_score, q.needs_review]),
+    [[5, 5, true], [0, 5, true]]);
+});
+
+test("a null score stays ungraded instead of becoming zero", async (t) => {
+  mockProvider(t, () => ({ questions: [{ question_no: "1", max_score: 5, score: null, confidence: 0.9, needs_review: false }] }));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(1) });
+  assert.equal(graded.result.questions[0].score, null);
+  assert.equal(graded.result.questions[0].needs_review, true);
+});
+
+test("a truncated reply keeps the questions that were already complete", async (t) => {
+  mockProvider(t, () => ({ raw: '{"questions":[{"question_no":"1","max_score":5,"score":3,"confidence":0.9,"analysis":"ok"},{"question_no":"2","score":' }));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2) });
+  assert.equal(graded.result.questions[0].score, 3);
+  assert.equal(graded.result.questions[1].score, null);
+  assert.equal(graded.result.questions[1].needs_review, true);
+});
+
+test("one failed chunk keeps the other chunks and marks only its questions for review", async (t) => {
+  const all = expected(16);
+  const calls = mockProvider(t, (body, index) => {
+    if (index === 2) throw new Error("network down");
+    return resultFor(JSON.parse(body.messages[0].content[0].text.split("\n")[2]));
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all });
+  assert.equal(calls.length, 4);
+  assert.equal(graded.result.questions.length, 16);
+  const review = graded.result.questions.filter((q) => q.needs_review);
+  assert.deepEqual(review.map((q) => q.question_no), ["6", "7", "8", "9", "10"]);
+  assert.match(graded.result.overall_analysis, /批改请求失败/);
+});
+
+test("a failed chunk with a 5xx status degrades instead of failing the whole page", async (t) => {
+  const all = expected(16);
+  mockProvider(t, (body, index) => index === 2
+    ? { fail: { status: 500, message: "upstream overloaded" } }
+    : resultFor(JSON.parse(body.messages[0].content[0].text.split("\n")[2])));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all });
+  assert.equal(graded.result.questions.length, 16);
+  assert.equal(graded.result.questions.filter((q) => q.needs_review).length, 5);
+});
+
+test("a total provider outage still fails the job so it can be retried", async (t) => {
+  mockProvider(t, () => { throw new Error("offline"); });
+  await assert.rejects(gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(16) }), { statusCode: 502 });
+});
+
+test("an auth failure is fatal and does not fabricate review-only results", async (t) => {
+  mockProvider(t, () => ({ fail: { status: 401, message: "invalid key" } }));
+  await assert.rejects(gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2) }), { statusCode: 401 });
+});
+
+test("a missing API key aborts grading instead of writing review rows", async (t) => {
+  withoutApiKey(t);
+  await assert.rejects(gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2) }), { statusCode: 503 });
 });
 
 test("missing or null confidence always requires teacher review", () => {
@@ -94,28 +192,45 @@ test("missing or null confidence always requires teacher review", () => {
   assert.equal(validateWholePaperResult(raw, expected(1)).questions[0].needs_review, true);
 });
 
-const badResults = {
-  missing: (r) => r.questions.pop(),
-  duplicate: (r) => { r.questions[1].question_no = "1"; },
-  unknown: (r) => { r.questions[1].question_no = "999"; },
-  extra: (r) => { r.questions.push({ ...r.questions[0] }); },
-  nullScore: (r) => { r.questions[0].score = null; },
-  absentScore: (r) => { delete r.questions[0].score; },
-  stringScore: (r) => { r.questions[0].score = "0"; },
-  infiniteScore: (r) => { r.questions[0].score = Infinity; },
-  negativeScore: (r) => { r.questions[0].score = -1; },
-  overMax: (r) => { r.questions[0].score = 6; },
-  wrongMax: (r) => { r.questions[0].max_score = 10; },
-  badConfidence: (r) => { r.questions[0].confidence = 2; },
-  stringReview: (r) => { r.questions[0].needs_review = "false"; },
-};
-for (const [name, mutate] of Object.entries(badResults)) {
-  test(`strict grading rejects ${name} without fabricating scores`, () => {
+test("final validation still rejects missing, duplicate, unknown and non-numeric questions", () => {
+  const badResults = {
+    missing: (r) => r.questions.pop(),
+    duplicate: (r) => { r.questions[1].question_no = "1"; },
+    unknown: (r) => { r.questions[1].question_no = "999"; },
+    extra: (r) => { r.questions.push({ ...r.questions[0] }); },
+    nonNumericScore: (r) => { r.questions[0].score = "abc"; },
+    infiniteScore: (r) => { r.questions[0].score = Infinity; },
+  };
+  for (const mutate of Object.values(badResults)) {
     const raw = resultFor(expected(2));
     mutate(raw);
     assert.throws(() => validateWholePaperResult(raw, expected(2)), { statusCode: 502 });
-  });
-}
+  }
+});
+
+test("final validation keeps ungraded scores null and flags them for review", () => {
+  for (const score of [null, undefined]) {
+    const raw = resultFor(expected(2));
+    raw.questions[0].score = score;
+    raw.questions[0].needs_review = false;
+    const checked = validateWholePaperResult(raw, expected(2));
+    assert.equal(checked.questions[0].score, null);
+    assert.equal(checked.questions[0].needs_review, true);
+  }
+});
+
+test("final validation clamps score quirks and ignores the model's max_score", () => {
+  const raw = resultFor(expected(2));
+  raw.questions[0].score = "3";
+  raw.questions[0].max_score = 100;
+  raw.questions[1].score = 9;
+  const checked = validateWholePaperResult(raw, expected(2));
+  assert.equal(checked.questions[0].score, 3);
+  assert.equal(checked.questions[0].max_score, 5);
+  assert.equal(checked.questions[0].needs_review, false);
+  assert.equal(checked.questions[1].score, 5);
+  assert.equal(checked.questions[1].needs_review, true);
+});
 
 test("valid zero score is preserved, feedback is shortened, order follows expected questions", () => {
   const raw = resultFor(expected(2));

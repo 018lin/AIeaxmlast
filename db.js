@@ -3776,10 +3776,13 @@ async function getDeskDetail(examId, account) {
       students: record.student_order_snapshot,
       pages: pages.rows.map((p) => ({ id: p.id, studentId: p.student_id, captureOrder: p.capture_order, status: p.status, error: p.error })),
       questions: questions.rows.map((q) => ({ id: q.id, questionNo: q.question_no, maxScore: Number(q.max_score), title: q.title })),
-      results: results.rows.map((r) => ({ studentId: r.student_id, questionNo: r.question_no,
-        score: Number(r.final_score ?? r.score), maxScore: Number(r.max_score), analysis: r.analysis,
-        suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review,
-        bbox: deskResultBBox(r.ai_result?.bbox) })),
+      results: results.rows.map((r) => {
+        const score = r.final_score ?? r.score;
+        return { studentId: r.student_id, questionNo: r.question_no,
+          score: score === null || score === undefined ? null : Number(score), maxScore: Number(r.max_score), analysis: r.analysis,
+          suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review,
+          bbox: deskResultBBox(r.ai_result?.bbox) };
+      }),
     };
   }, true);
 }
