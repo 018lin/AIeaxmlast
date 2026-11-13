@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { gradeWholePaper, recognizeAnswerQuestions, validateWholePaperResult, validateDeskQuestions } = require("../lib/ai-grader");
+const { gradeWholePaper, parseAiResult, recognizeAnswerQuestions, validateWholePaperResult, validateDeskQuestions } = require("../lib/ai-grader");
 
 const expected = (count) => Array.from({ length: count }, (_, i) => ({ questionNo: String(i + 1), title: "Test", maxScore: 5 }));
 const resultFor = (questions) => ({ questions: questions.map((q) => ({ question_no: q.questionNo, max_score: q.maxScore, score: 3, confidence: 0.9, analysis: "Feedback" })) });
@@ -10,7 +10,8 @@ function mockProvider(t, respond) {
   t.mock.method(globalThis, "fetch", async (_url, options) => {
     const body = JSON.parse(options.body);
     calls.push(body);
-    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(respond(body, calls.length)) } }] }) };
+    const value = respond(body, calls.length);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: typeof value === "string" ? value : JSON.stringify(value) } }] }) };
   });
   const previous = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "mock-only-not-a-secret";
@@ -37,10 +38,10 @@ test("unmarked teacher answers use an editable ten-point draft without requiring
   assert.equal(recognized.totalScore, 10);
 });
 
-for (const count of [1, 15, 16, 20]) {
-  test(`${count} questions use ${count <= 15 ? 1 : Math.ceil(count / 5)} exact-sized calls with both images`, async (t) => {
+for (const count of [1, 5, 15, 16, 20]) {
+  test(`${count} questions use ${Math.ceil(count / Math.min(count, 5))} exact-sized calls with both images`, async (t) => {
     const all = expected(count);
-    const size = count <= 15 ? count : 5;
+    const size = Math.min(count, 5);
     const calls = mockProvider(t, (body, index) => {
       const text = body.messages[0].content[0].text;
       const group = JSON.parse(text.split("\n")[2]);
@@ -75,11 +76,45 @@ test("grading snaps AI boxes to the student's real ink rows", async (t) => {
   assert.ok(tops[2] > 0.64 && tops[2] < 0.7, `third box top ${tops[2]}`);
 });
 
-test("a malformed later chunk rejects the entire paper instead of returning partial results", async (t) => {
+test("a malformed batch is retried question by question instead of failing the paper", async (t) => {
   const all = expected(16);
-  const calls = mockProvider(t, (_body, index) => index === 2 ? { questions: [] } : resultFor(all.slice(0, 5)));
-  await assert.rejects(gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all }), { statusCode: 502 });
-  assert.equal(calls.length, 2);
+  const calls = mockProvider(t, (body) => {
+    const group = JSON.parse(body.messages[0].content[0].text.split("\n")[2]);
+    if (group.length > 1 && group[0].questionNo === "6") return "抱歉，输出被截断，无法返回完整 JSON。";
+    return resultFor(group);
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all });
+  assert.equal(calls.length, 9); // four batches, the failed one replaced by five single calls
+  assert.deepEqual(graded.result.questions.map((q) => q.question_no), all.map((q) => q.questionNo));
+});
+
+test("a question that stays malformed fails the paper and names the question", async (t) => {
+  const all = expected(3);
+  const calls = mockProvider(t, () => "不是 JSON");
+  await assert.rejects(gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: all }), (error) => {
+    assert.equal(error.statusCode, 502);
+    assert.match(error.message, /题号 1/);
+    return true;
+  });
+  assert.equal(calls.length, 2); // whole batch, then the first single-question retry
+});
+
+test("parser tolerates prose and braces around the JSON answer", () => {
+  const raw = `${JSON.stringify(resultFor(expected(2)))}\n注意：{这里只是说明}`;
+  assert.deepEqual(parseAiResult(raw).questions.map((q) => q.question_no), ["1", "2"]);
+});
+
+test("parser prefers the real answer over an echoed prompt example", () => {
+  const echoed = [
+    '好的，格式示例：{"questions":[{"question_no":"1","max_score":5,"score":4}],"overall_analysis":"示例"}',
+    "实际批改结果：",
+    JSON.stringify(resultFor(expected(3))),
+  ].join("\n");
+  assert.equal(parseAiResult(echoed).questions.length, 3);
+});
+
+test("truncated JSON is rejected instead of being partially accepted", () => {
+  assert.equal(parseAiResult('{"questions":[{"question_no":"1","max_score":5,"score":'), null);
 });
 
 test("missing or null confidence always requires teacher review", () => {
