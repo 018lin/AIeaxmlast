@@ -19,7 +19,13 @@
   const go = (view, examId = '', studentId = '') => { if (state.pendingRoute === null) location.hash = [view, examId, studentId].filter(Boolean).join('/'); };
   const route = () => location.hash.slice(1).split('/');
   const editable = () => ['draft', 'ready', 'capturing', 'confirmed'].includes(state.detail?.batch.status);
-  function message(text = '') { notice.textContent = text; notice.hidden = !text; }
+  let noticeTimer = null;
+  function message(text = '') {
+    clearTimeout(noticeTimer);
+    notice.textContent = text;
+    notice.hidden = !text;
+    if (text) noticeTimer = setTimeout(message, 4000);
+  }
   const gradeProgress = new Map();
   let gradeTimer = null;
   function progressValue(key) {
