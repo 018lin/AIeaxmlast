@@ -407,7 +407,7 @@ test("diffPasses only escalates gaps that matter at the question's own weight", 
   assert.equal(agree[1].weakConflict, false);
 });
 
-test("diffPasses escalates unscored, missing and low-confidence passes", () => {
+test("diffPasses escalates unscored and missing passes but not low confidence", () => {
   const list = [{ questionNo: "1", maxScore: 5 }, { questionNo: "2", maxScore: 5 }, { questionNo: "3", maxScore: 5 },
     { questionNo: "4", maxScore: 5 }, { questionNo: "5", maxScore: 5 }];
   const passA = entryMap([["1", null], ["2", 4], ["3", 4], ["4", 4, { deductions: ["漏单位"] }], ["5", 3]]);
@@ -419,8 +419,9 @@ test("diffPasses escalates unscored, missing and low-confidence passes", () => {
   ]);
   const { agree, disputes } = diffPasses(list, passA, passB);
   assert.deepEqual(disputes.map((item) => [item.questionNo, item.reason]),
-    [["1", "unscored"], ["3", "unsure"], ["5", "missing"]]);
-  assert.deepEqual(agree.map((item) => [item.questionNo, item.weakConflict]), [["2", false], ["4", true]]);
+    [["1", "unscored"], ["5", "missing"]]);
+  // 两次同分即使置信度低也算一致：两票已成多数，第三次介入翻不了盘。
+  assert.deepEqual(agree.map((item) => [item.questionNo, item.weakConflict]), [["2", false], ["3", false], ["4", true]]);
 });
 
 test("fine mode arbitrates only the questions the two passes disagree on", async (t) => {
@@ -472,4 +473,64 @@ test("fast mode never issues a second pass or an arbitration", async (t) => {
   const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", expectedQuestions: expected(2), gradingMode: "fast" });
   assert.equal(calls.length, 1);
   assert.deepEqual(graded.result.questions.map((q) => q.agreement), ["single", "single"]);
+});
+
+// ---------- 多数票：三次里有两票同分就不打扰教师 ----------
+
+test("two agreeing passes settle a question even when both report low confidence", async (t) => {
+  mockProvider(t, () => ({ questions: [{ question_no: "1", max_score: 10, score: 10, confidence: 0.4, needs_review: false, analysis: "答案正确" }] }));
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", gradingMode: "fine",
+    expectedQuestions: [{ questionNo: "1", title: "Test", maxScore: 10 }] });
+  const [question] = graded.result.questions;
+  assert.equal(question.score, 10);
+  assert.equal(question.agreement, "agree");
+  assert.equal(question.needs_review, false);
+});
+
+test("arbiter agreeing with one pass settles the question on majority, not confidence", async (t) => {
+  mockProvider(t, (body) => {
+    if (/教研组长/.test(body.messages[0].content[0].text)) {
+      return { reviews: [{ question_no: "1", my_score: 6, chosen_score: 6, confidence: 0.55, needs_review: false, reason: "一次项合并错误，给部分分" }] };
+    }
+    return body.temperature === 0
+      ? passReply([["1", 6]], 10)
+      : passReply([["1", null]], 10);
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", gradingMode: "fine",
+    expectedQuestions: [{ questionNo: "1", title: "Test", maxScore: 10 }] });
+  const [question] = graded.result.questions;
+  assert.equal(question.score, 6);
+  assert.equal(question.agreement, "arbitrated");
+  assert.equal(question.needs_review, false);
+  assert.equal(question.passes.length, 3);
+});
+
+test("three conflicting opinions with no majority stay in the teacher queue", async (t) => {
+  mockProvider(t, (body) => {
+    if (/教研组长/.test(body.messages[0].content[0].text)) {
+      return { reviews: [{ question_no: "1", my_score: 4, chosen_score: 4, confidence: 0.45, needs_review: false, reason: "拿不准" }] };
+    }
+    return body.temperature === 0 ? passReply([["1", 5]], 10) : passReply([["1", 2]], 10);
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", gradingMode: "fine",
+    expectedQuestions: [{ questionNo: "1", title: "Test", maxScore: 10 }] });
+  const [question] = graded.result.questions;
+  assert.equal(question.score, null);
+  assert.equal(question.agreement, "disputed");
+  assert.equal(question.needs_review, true);
+});
+
+test("a single confident arbiter can still break a genuine three-way tie", async (t) => {
+  mockProvider(t, (body) => {
+    if (/教研组长/.test(body.messages[0].content[0].text)) {
+      return { reviews: [{ question_no: "1", my_score: 4, chosen_score: 4, confidence: 0.92, needs_review: false, reason: "前两次都漏了单位" }] };
+    }
+    return body.temperature === 0 ? passReply([["1", 5]], 10) : passReply([["1", 2]], 10);
+  });
+  const graded = await gradeWholePaper({ teacherAnswerImage: "teacher", studentImage: "student", gradingMode: "fine",
+    expectedQuestions: [{ questionNo: "1", title: "Test", maxScore: 10 }] });
+  const [question] = graded.result.questions;
+  assert.equal(question.score, 4);
+  assert.equal(question.agreement, "arbitrated");
+  assert.equal(question.needs_review, false);
 });
