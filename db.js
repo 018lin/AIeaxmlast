@@ -5,6 +5,7 @@ const { Pool } = require("pg");
 const sharp = require("sharp");
 const XLSX = require("xlsx");
 const { validateDeskQuestions, validateWholePaperResult } = require("./lib/ai-grader");
+const { analyzeAnswerLayout, alignBoxes } = require("./lib/answer-layout");
 
 const MASTERY_MASTERED = 0.85;
 const MASTERY_DEVELOPING = 0.45;
@@ -3783,7 +3784,22 @@ async function getDeskDetail(examId, account) {
   }, true);
 }
 
-async function getDeskImage(examId, studentId, account, thumbnail = false, preview = false) {
+async function refinedStudentBoxes(client, batchId, studentId, imageBuffer) {
+  const rows = await client.query(`SELECT q.question_no, r.ai_result->'bbox' AS bbox
+    FROM grading_results r JOIN exam_questions q ON q.id = r.question_id
+    WHERE r.batch_id = $1 AND r.student_id = $2 ORDER BY q.created_at, q.question_no`, [batchId, studentId]);
+  if (!rows.rowCount) return {};
+  const entries = rows.rows.map((row) => ({ questionNo: row.question_no, bbox: deskResultBBox(row.bbox) }));
+  let positioned = entries;
+  try {
+    positioned = alignBoxes(entries, await analyzeAnswerLayout(imageBuffer)) || entries;
+  } catch {
+    positioned = entries;
+  }
+  return Object.fromEntries(positioned.filter((entry) => entry.bbox).map((entry) => [entry.questionNo, entry.bbox]));
+}
+
+async function getDeskImage(examId, studentId, account, thumbnail = false, preview = false, withBoxes = false) {
   studentId = deskId(studentId, "学生ID");
   return deskTransaction(async (client) => {
     const record = await deskRecord(client, examId, account);
@@ -3795,11 +3811,13 @@ async function getDeskImage(examId, studentId, account, thumbnail = false, previ
       const thumbnailBuffer = await sharp(image.rows[0].image_data).rotate().resize({ width: 240, height: 320, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 70 }).toBuffer();
       return { image: bufferToDataUrl("image/jpeg", thumbnailBuffer) };
     }
-    if (preview) {
-      const previewBuffer = await sharp(image.rows[0].image_data).rotate().resize({ width: 1400, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-      return { image: bufferToDataUrl("image/jpeg", previewBuffer) };
-    }
-    return { image: bufferToDataUrl(image.rows[0].mime_type, image.rows[0].image_data) };
+    const buffer = preview
+      ? await sharp(image.rows[0].image_data).rotate().resize({ width: 1400, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer()
+      : image.rows[0].image_data;
+    return {
+      image: bufferToDataUrl(preview ? "image/jpeg" : image.rows[0].mime_type, buffer),
+      ...(withBoxes ? { boxes: await refinedStudentBoxes(client, record.batch_id, studentId, buffer) } : {}),
+    };
   }, true);
 }
 

@@ -341,6 +341,23 @@ test("desk image loads only the requested student's private photo on demand", as
   assert.deepEqual(await mock.db.getDeskImage(examId, studentId, "teacher-A"), { image: "data:image/png;base64,c3ludGhldGlj" }); mock.check();
 });
 
+test("desk image can return boxes aligned to the student's real ink rows", async () => {
+  const rows = [120, 260, 400].map((top) => `<rect x="30" y="${top}" width="420" height="30" fill="#111"/>`);
+  const title = `<rect x="30" y="40" width="200" height="30" fill="#111"/>`;
+  const source = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600">
+    <rect width="100%" height="100%" fill="#fff"/>${title}${rows.join("")}</svg>`)).png().toBuffer();
+  const mock = loadDb([recordStep(),
+    rowStep(/p.batch_id = \$1 AND p.student_id = \$2/, [{ mime_type: "image/png", image_data: source }]),
+    rowStep(/FROM grading_results r JOIN exam_questions q/, [1, 2, 3].map((n) => ({ question_no: String(n), bbox: [0.05, 0.1 * n, 0.8, 0.08] }))),
+  ]);
+  const result = await mock.db.getDeskImage(examId, studentId, "teacher-A", false, false, true);
+  assert.ok(result.image.startsWith("data:image/png;base64,"));
+  assert.deepEqual(Object.keys(result.boxes), ["1", "2", "3"]);
+  assert.ok(result.boxes["1"][1] > 0.17 && result.boxes["1"][1] < 0.22);
+  assert.ok(result.boxes["3"][1] > 0.63 && result.boxes["3"][1] < 0.7);
+  mock.check();
+});
+
 test("desk answer image returns a bounded preview of the stored teacher answer", async () => {
   const sharp = require("sharp");
   const source = await sharp({ create: { width: 1200, height: 1600, channels: 3, background: "white" } }).png().toBuffer();

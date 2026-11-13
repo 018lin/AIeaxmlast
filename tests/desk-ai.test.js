@@ -54,6 +54,27 @@ for (const count of [1, 15, 16, 20]) {
   });
 }
 
+test("grading snaps AI boxes to the student's real ink rows", async (t) => {
+  const sharp = require("sharp");
+  const rows = [120, 260, 400].map((top) => `<rect x="30" y="${top}" width="420" height="30" fill="#111"/>`);
+  const image = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600">
+    <rect width="100%" height="100%" fill="#fff"/><rect x="30" y="40" width="200" height="30" fill="#111"/>
+    ${rows.join("")}</svg>`)).png().toBuffer();
+  mockProvider(t, () => {
+    const raw = resultFor(expected(3));
+    raw.questions.forEach((question, index) => { question.bbox = [0.05, 0.12 * (index + 1), 0.8, 0.08]; });
+    return raw;
+  });
+  const graded = await gradeWholePaper({
+    teacherAnswerImage: "teacher", studentImage: `data:image/png;base64,${image.toString("base64")}`,
+    expectedQuestions: expected(3),
+  });
+  const tops = graded.result.questions.map((question) => question.bbox[1]);
+  assert.ok(tops[0] > 0.18 && tops[0] < 0.22, `first box top ${tops[0]}`);
+  assert.ok(tops[1] > 0.41 && tops[1] < 0.46, `second box top ${tops[1]}`);
+  assert.ok(tops[2] > 0.64 && tops[2] < 0.7, `third box top ${tops[2]}`);
+});
+
 test("a malformed later chunk rejects the entire paper instead of returning partial results", async (t) => {
   const all = expected(16);
   const calls = mockProvider(t, (_body, index) => index === 2 ? { questions: [] } : resultFor(all.slice(0, 5)));

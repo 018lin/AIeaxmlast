@@ -26,7 +26,7 @@ test("desk GET contract is passed through with the authenticated tenant", async 
   for (const [action, method, args, body] of [
     ["desk-list", "listDeskAssignments", ["teacher-A"], { assignments: [] }],
     ["desk-detail", "getDeskDetail", ["exam", "teacher-A"], { exam: { id: "exam", name: "Test" }, batch: { id: "batch", status: "draft" }, students: [], pages: [], questions: [], results: [] }],
-    ["desk-image", "getDeskImage", ["exam", "student", "teacher-A", false, false], { image: "synthetic-image" }],
+    ["desk-image", "getDeskImage", ["exam", "student", "teacher-A", false, false, false], { image: "synthetic-image" }],
     ["desk-answer-image", "getDeskAnswerImage", ["exam", "teacher-A"], { image: "synthetic-answer" }],
   ]) {
     const result = await request(action, { method: "GET", db: { [method]: async (...actual) => { assert.deepEqual(actual, args); return body; } } });

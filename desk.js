@@ -65,9 +65,11 @@
     const d = state.detail, done = d.students.filter(s => isDone(s.id)).length, failed = d.pages.some(p => p.status === 'failed');
     app.innerHTML = `${back()}<div class="heading"><div><h1>${esc(d.exam.name)}</h1><p>已完成 ${done} 人 · ${d.results.filter(r=>r.needsReview).length} 题待复核</p></div><button data-action="refresh">刷新</button></div>${editable() ? `<div class="actions result-actions"><a class="button primary" href="#capture/${esc(d.exam.id)}">${d.pages.length ? '继续拍照' : '开始拍照'}</a><a class="button" href="#review/${esc(d.exam.id)}">核对照片 (${d.pages.length}/${d.students.length})</a></div>` : `<div class="progress-panel"><div class="progress-copy"><span>批改进度</span><b>${done} / ${d.students.length}</b></div><progress max="${d.pages.length || 1}" value="${done}" aria-label="已完成学生数"></progress><p class="muted">${['done','needs_review','failed'].includes(d.batch.status) ? '批改已结束，可逐人查看每题得分与评语。' : '后台正在批改，可以锁屏或离开，回来后继续查看。'}</p>${failed ? '<button data-action="retry">重试失败作业</button>' : ''}</div>`}<div class="roster results"><div class="roster-head"><span>学号</span><span>姓名</span><span class="end">得分</span><span class="end">操作</span></div>${d.students.map(s=>studentRow(s)).join('')}</div>`;
   }
-  function paperBoxes(studentId) {
-    return resultsFor(studentId).filter(r => Array.isArray(r.bbox) && r.bbox.length === 4).map(r => {
-      const [x, y, width, height] = r.bbox.map(Number);
+  function paperBoxes(studentId, positions) {
+    return resultsFor(studentId).map(r => {
+      const bbox = positions?.[r.questionNo] || r.bbox;
+      if (!Array.isArray(bbox) || bbox.length !== 4) return '';
+      const [x, y, width, height] = bbox.map(Number);
       const tone = Number(r.score) >= Number(r.maxScore) - 0.001 ? 'good' : Number(r.score) <= 0.001 ? 'bad' : 'part';
       return `<span class="paper-box ${tone}" style="left:${(x*100).toFixed(2)}%;top:${(y*100).toFixed(2)}%;width:${(width*100).toFixed(2)}%;height:${(height*100).toFixed(2)}%" title="${esc(r.analysis || '')}"><span class="paper-box-label"><b>${esc(r.questionNo)}</b><em>${Number(r.score)}/${Number(r.maxScore)}</em></span></span>`;
     }).join('');
@@ -93,7 +95,7 @@
       if (hint) hint.textContent = '标准答案原图，不叠加学生作答标注。';
       return;
     }
-    const boxes = paperBoxes(paper.studentId);
+    const boxes = paperBoxes(paper.studentId, paper.boxes);
     stage.innerHTML = `<div class="paper-frame"><img class="paper-image" src="${source}" alt="${esc(student?.name || '')}的答卷">${boxes}</div>`;
     if (hint) hint.textContent = boxes
       ? '框内为题号与得分：绿色正确、橙色部分正确、红色错误。'
@@ -114,11 +116,12 @@
     if (!paper || paper.studentId !== studentId) return;
     const examId = state.detail.exam.id;
     const [studentResult, answerResult] = await Promise.allSettled([
-      pageFor(studentId) ? api('desk-image', undefined, {examId, studentId, preview:'1'}) : Promise.resolve({image:''}),
+      pageFor(studentId) ? api('desk-image', undefined, {examId, studentId, preview:'1', boxes:'1'}) : Promise.resolve({image:''}),
       api('desk-answer-image', undefined, {examId}),
     ]);
     if (token !== state.route || state.paper !== paper) return;
     paper.student = studentResult.status === 'fulfilled' ? String(studentResult.value.image || '') : '';
+    paper.boxes = studentResult.status === 'fulfilled' ? studentResult.value.boxes : null;
     paper.answer = answerResult.status === 'fulfilled' ? String(answerResult.value.image || '') : '';
     paper.loading = false;
     renderPaperStage();
