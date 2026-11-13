@@ -6,8 +6,15 @@
   if (!session) return;
   document.querySelector('#teacherName').textContent = `${session.name || session.account} · 菜单`;
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const state = { detail: null, stream: null, cameraReady: false, busy: false, route: 0, timer: null, photoTarget: null, fileTarget: null, pendingRoute: null, questionDrafts: new Map(), answer: '', paper: null };
+  const state = { detail: null, stream: null, cameraReady: false, busy: false, route: 0, timer: null, photoTarget: null, fileTarget: null, pendingRoute: null, questionDrafts: new Map(), answerFiles: [], answerStitched: '', paper: null };
   const statusText = { draft: '待拍照', ready: '待批改', queued: '排队中', pending: '排队中', grading: '批改中', running: '批改中', done: '已完成', failed: '批改失败', needs_review: '需查看' };
+  const ANSWER_MAX_SOURCE = 30 * 1024 * 1024;
+  const STITCH_MAX_WIDTH = 2400; // 与单图压缩的最长边一致，避免拼接后被二次缩小。
+  const STITCH_MIN_WIDTH = 1400; // 低于此宽度宁可不提交，提示教师裁剪后重选。
+  const STITCH_MAX_PIXELS = 12000000; // iOS Safari 画布面积有上限，留出余量。
+  // Vercel 请求体上限 4.5MB；base64 比二进制大约 1/3，预留 JSON 字段余量。
+  const UPLOAD_MAX_DATA_URL = 4.3 * 1024 * 1024;
+  const UPLOAD_MAX_BYTES = Math.floor(UPLOAD_MAX_DATA_URL * 3 / 4) - 1024;
   const activeStatus = (status) => ['grading', 'queued', 'pending', 'running'].includes(status);
   const statusTone = (status) => status === 'done' ? ' good' : ['failed', 'needs_review'].includes(status) ? ' warning' : activeStatus(status) ? ' active' : '';
   function captureTicks(captured, total) {
@@ -82,8 +89,9 @@
   async function api(action, payload, query = {}) {
     const params = new URLSearchParams({ action, ...query });
     const response = await window.AppAuth.request(`/api/mvp?${params}`, payload === undefined ? {} : { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || '请求失败，请重试。');
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.message || (response.status === 413 ? '上传内容过大，请裁剪标准答案图片后重试。' : '请求失败，请重试。'));
+    if (!data) throw new Error('服务响应异常，请重试。');
     return data;
   }
   function stopCamera() { state.stream?.getTracks().forEach(track => track.stop()); state.stream = null; state.cameraReady = false; }
@@ -103,8 +111,8 @@
   async function newAssignment(token) {
     const { classes } = await api('bootstrap');
     if (token !== state.route) return;
-    state.answer = '';
-    app.innerHTML = `${back()}<div class="heading"><div><h1>新建作业</h1><p>一张标准答案，定下这份作业的题目。</p></div></div>${classes.length ? `<form class="form" id="createForm"><label class="field"><span class="field-label">班级</span><select name="classId" required>${classes.map(item => `<option value="${esc(item.id)}" ${item.id === window.AppAuth.getDefaultClassId() ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label><label class="field"><span class="field-label">作业名称</span><input name="name" required maxlength="120" placeholder="例如：第三单元课后练习"></label><label class="field"><span class="field-label">日期</span><input name="examDate" type="date" required value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)}"></label><div class="field"><span class="field-label">标准答案<em>必填</em></span><div class="upload"><p class="upload-title">拍下标准答案（也可上传教师手写答案）</p><p class="upload-note">保留完整题号。未标分的题默认 10 分，创建后可在核对页删题、合并或调整满分。</p><div class="upload-actions"><label class="button primary">拍摄答案<input id="answerCamera" type="file" accept="image/*" capture="environment" aria-label="拍摄标准答案"></label><label class="button">从图库选择<input id="answerFile" type="file" accept="image/*" aria-label="从图库选择标准答案"></label></div><img id="answerPreview" class="answer-preview" hidden alt="标准答案预览"></div></div><button class="primary" type="submit">识别答案并创建</button><p class="muted form-note" id="createHint">创建时按学号冻结名单，后续名单变动不会打乱拍摄顺序。</p></form>` : '<section class="empty"><h2>先准备一份班级名单</h2><p>拍照时会按学号依次对应学生。</p><a class="button primary" href="./class-setup.html">管理班级</a></section>'}`;
+    clearAnswerFiles();
+    app.innerHTML = `${back()}<div class="heading"><div><h1>新建作业</h1><p>拍 1–2 张标准答案，自动拼成一份。</p></div></div>${classes.length ? `<form class="form" id="createForm"><label class="field"><span class="field-label">班级</span><select name="classId" required>${classes.map(item => `<option value="${esc(item.id)}" ${item.id === window.AppAuth.getDefaultClassId() ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label><label class="field"><span class="field-label">作业名称</span><input name="name" required maxlength="120" placeholder="例如：第三单元课后练习"></label><label class="field"><span class="field-label">日期</span><input name="examDate" type="date" required value="${new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)}"></label><div class="field"><span class="field-label">标准答案<em>必填</em></span><div class="upload"><p class="upload-title">拍下标准答案（1–2 张）</p><p class="upload-note">先选的在上，后选的在下，两张会自动拼接成一张再识别。保留完整题号。未标分的题默认 10 分，创建后可在核对页删题、合并或调整满分。</p><div class="upload-actions" id="answerPicker"><label class="button primary">拍摄答案<input id="answerCamera" type="file" accept="image/*" capture="environment" aria-label="拍摄标准答案"></label><label class="button">从图库选择<input id="answerFile" type="file" accept="image/*" multiple aria-label="从图库选择标准答案，最多两张"></label></div><div id="answerPreview" class="answer-previews" hidden aria-live="polite"></div></div></div><button class="primary" type="submit">识别答案并创建</button><p class="muted form-note" id="createHint">创建时按学号冻结名单，后续名单变动不会打乱拍摄顺序。</p></form>` : '<section class="empty"><h2>先准备一份班级名单</h2><p>拍照时会按学号依次对应学生。</p><a class="button primary" href="./class-setup.html">管理班级</a></section>'}`;
   }
   function studentRow(student, review = false) {
     const page = pageFor(student.id), results = resultsFor(student.id), done = isDone(student.id);
@@ -272,7 +280,7 @@
     const token = ++state.route;
     state.photoTarget = null;
     state.paper = null;
-    clearTimeout(state.timer); stopCamera(); message(); document.body.classList.remove('camera-mode');
+    clearTimeout(state.timer); stopCamera(); clearAnswerFiles(); message(); document.body.classList.remove('camera-mode');
     app.innerHTML = '<p class="empty">正在加载…</p>';
     const [view = 'list', examId, studentId] = route();
     try {
@@ -299,17 +307,137 @@
       } catch { image.alt = '加载失败，请点看照片重试'; }
     }
   }
+  function loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('图片无法读取，请重新选择 JPG 或 PNG 图片。'));
+      image.src = url;
+    });
+  }
+  function clearAnswerFiles() {
+    for (const item of state.answerFiles) URL.revokeObjectURL(item.url);
+    state.answerFiles = [];
+    state.answerStitched = '';
+  }
+  function renderAnswerFiles() {
+    const box = document.querySelector('#answerPreview');
+    if (!box) return;
+    const files = state.answerFiles, picker = document.querySelector('#answerPicker');
+    const two = files.length === 2;
+    box.hidden = !files.length;
+    box.classList.toggle('is-single', files.length === 1);
+    if (picker) picker.hidden = two;
+    box.innerHTML = files.map((item, index) => `<div class="answer-shot"><div class="answer-shot-head"><b>${two ? (index ? '下' : '上') : '标准答案'}</b><span>${two ? (index ? '拼在下方' : '拼在上方') : '单张上传'}</span></div><img src="${item.url}" alt="标准答案第 ${index + 1} 张预览"><button type="button" data-answer-action="remove" data-index="${index}">删除</button></div>`).join('') + (two ? '<div class="answer-stitch-bar"><span>按上、下顺序拼接成一张</span><button type="button" data-answer-action="swap">交换顺序</button></div>' : '');
+  }
+  async function addAnswerFiles(files) {
+    const room = 2 - state.answerFiles.length;
+    if (room <= 0) throw new Error('标准答案最多 2 张，请先删除一张再添加。');
+    let warning = files.length > room ? '标准答案最多 2 张，超出部分未添加。' : '';
+    const accepted = [];
+    for (const file of files.slice(0, room)) {
+      if (!file.type.startsWith('image/')) { warning = '请选择图片文件。'; continue; }
+      if (file.size > ANSWER_MAX_SOURCE) { warning = '单张图片超过 30MB，请选择较小的照片。'; continue; }
+      const url = URL.createObjectURL(file);
+      try { await loadImage(url); accepted.push({ file, url }); }
+      catch (error) { URL.revokeObjectURL(url); warning = error.message; }
+    }
+    if (!accepted.length) throw new Error(warning || '图片无法读取，请重新选择。');
+    state.answerFiles.push(...accepted);
+    state.answerStitched = '';
+    renderAnswerFiles();
+    message(warning);
+  }
   async function imageData(file) {
     if (!file || !file.type.startsWith('image/')) throw new Error('请选择图片文件。');
-    if (file.size > 30*1024*1024) throw new Error('图片超过 30MB，请选择较小的照片。');
+    if (file.size > ANSWER_MAX_SOURCE) throw new Error('图片超过 30MB，请选择较小的照片。');
     const url = URL.createObjectURL(file);
     try {
-      const image = new Image(); image.src = url; await image.decode();
+      const image = await loadImage(url);
       const ratio = Math.min(1,2400/Math.max(image.naturalWidth,image.naturalHeight));
       const canvas = document.createElement('canvas'); canvas.width = Math.round(image.naturalWidth*ratio); canvas.height = Math.round(image.naturalHeight*ratio);
-      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.drawImage(image,0,0,canvas.width,canvas.height);
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      try { ctx.drawImage(image,0,0,canvas.width,canvas.height); }
+      catch { throw new Error('图片无法读取，请重新选择 JPG 或 PNG 图片。'); }
       return canvas.toDataURL('image/jpeg',.9);
     } finally { URL.revokeObjectURL(url); }
+  }
+  function stitchCanvas(images, width) {
+    const [top, bottom] = images;
+    const topHeight = Math.max(1, Math.round(top.naturalHeight * width / top.naturalWidth));
+    const bottomHeight = Math.max(1, Math.round(bottom.naturalHeight * width / bottom.naturalWidth));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = topHeight + bottomHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('当前浏览器无法处理图片，请改用系统相册裁剪后上传。');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    try {
+      ctx.drawImage(top, 0, 0, width, topHeight);
+      ctx.drawImage(bottom, 0, topHeight, width, bottomHeight);
+    } catch {
+      throw new Error('图片无法读取，请重新选择 JPG 或 PNG 图片。');
+    }
+    return canvas;
+  }
+  function canvasBlob(canvas, quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('拼接失败，请重试。')), 'image/jpeg', quality);
+    });
+  }
+  async function stitchAnswers(files) {
+    const images = [];
+    for (const file of files) {
+      const url = URL.createObjectURL(file);
+      try { images.push(await loadImage(url)); }
+      finally { URL.revokeObjectURL(url); }
+    }
+    const [top, bottom] = images;
+    if (!top?.naturalWidth || !bottom?.naturalWidth) throw new Error('图片尺寸无效，请重新选择。');
+    const aspectSum = top.naturalHeight / top.naturalWidth + bottom.naturalHeight / bottom.naturalWidth;
+    const baseWidth = Math.min(STITCH_MAX_WIDTH, Math.max(top.naturalWidth, bottom.naturalWidth));
+    let width = Math.min(baseWidth, Math.floor(Math.sqrt(STITCH_MAX_PIXELS / aspectSum)));
+    width = Math.max(2, Math.floor(width / 2) * 2);
+    if (width < STITCH_MIN_WIDTH && width < baseWidth) throw new Error('两张答案拼接后尺寸过长，请裁掉多余边距后重新选择。');
+    let quality = 0.9;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const canvas = stitchCanvas(images, width);
+      let blob;
+      try { blob = await canvasBlob(canvas, quality); }
+      finally { canvas.width = 1; canvas.height = 1; }
+      if (blob.size <= UPLOAD_MAX_BYTES) return blob;
+      if (quality > 0.85) quality = 0.85;
+      else if (quality > 0.8) quality = 0.8;
+      else {
+        const next = Math.floor(width * 0.9 / 2) * 2;
+        if (next < STITCH_MIN_WIDTH) break;
+        width = next;
+      }
+    }
+    throw new Error('两张答案拼接后仍超过上传大小，请裁掉多余边距后重新选择更清晰的图片。');
+  }
+  function blobDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('生成上传图片失败，请重试。'));
+      reader.readAsDataURL(blob);
+    });
+  }
+  async function answerImagePayload() {
+    const files = state.answerFiles;
+    if (!files.length) throw new Error('请先选择 1–2 张清晰的标准答案图片。');
+    if (files.length === 1) return imageData(files[0].file);
+    if (!state.answerStitched) {
+      message('正在拼接两张答案…');
+      const dataUrl = await blobDataUrl(await stitchAnswers(files.map(item => item.file)));
+      if (dataUrl.length > UPLOAD_MAX_DATA_URL) throw new Error('两张答案拼接后仍超过上传大小，请裁掉多余边距后重新选择更清晰的图片。');
+      state.answerStitched = dataUrl;
+    }
+    return state.answerStitched;
   }
   async function busyWork(fn) {
     if (state.busy) return;
@@ -337,6 +465,22 @@
     state.busy=false;
     if (location.hash === destination) await navigate(); else location.hash=destination;
   }
+  document.addEventListener('click', event => {
+    const trigger = event.target.closest('[data-answer-action]');
+    if (!trigger) return;
+    event.preventDefault();
+    if (state.busy) return;
+    const action = trigger.dataset.answerAction;
+    if (action === 'remove') {
+      const [removed] = state.answerFiles.splice(Number(trigger.dataset.index), 1);
+      if (!removed) return;
+      URL.revokeObjectURL(removed.url);
+    } else if (action === 'swap' && state.answerFiles.length === 2) {
+      state.answerFiles.reverse();
+    } else return;
+    state.answerStitched = '';
+    renderAnswerFiles();
+  });
   document.addEventListener('click', async event => {
     const button = event.target.closest('[data-action]'); if (!button || state.busy) return;
     const action = button.dataset.action;
@@ -378,12 +522,12 @@
     if(!target || target.route !== state.route || target.studentId !== state.photoTarget?.studentId) return message('拍照位置已切换，请为当前学生重新选择照片。');
     busyWork(async()=>{ message('正在保存照片…'); const image=await imageData(file); await savePhoto(image,target); });
   });
-  document.addEventListener('change',async event=>{
-    if(['answerFile','answerCamera'].includes(event.target.id)) {
-      const file=event.target.files[0]; state.answer='';
-      if(!file) return;
-      await busyWork(async()=>{ state.answer=await imageData(file); const preview=document.querySelector('#answerPreview'); preview.src=state.answer; preview.hidden=false; message(); });
-    }
+  document.addEventListener('change',event=>{
+    if(!['answerFile','answerCamera'].includes(event.target.id)) return;
+    const files=[...event.target.files];
+    event.target.value='';
+    if(!files.length || state.busy) return;
+    busyWork(async()=>{ message('正在读取图片…'); await addAnswerFiles(files); });
   });
   function markQuestionsDirty() {
     const form=app.querySelector('#questionForm');
@@ -410,10 +554,11 @@
         return;
       }
       if(form.id==='createForm') {
-        if(!state.answer) throw new Error('请先选择一张清晰的标准答案图片。');
+        const answerImage=await answerImagePayload();
+        message();
         startBusy();
         try {
-          const created=await api('desk-create',{classId:fields.get('classId'),name:fields.get('name'),examDate:fields.get('examDate'),answerImage:state.answer});
+          const created=await api('desk-create',{classId:fields.get('classId'),name:fields.get('name'),examDate:fields.get('examDate'),answerImage});
           await finishBusy();
           stopBusy();
           state.busy=false; go('capture',created.examId);
