@@ -3814,6 +3814,18 @@ async function settleDeskBatch(client, batchId) {
     ELSE 'done' END WHERE b.id = $1 AND b.desk_managed`, [batchId]);
 }
 
+async function touchWorkerHeartbeat(name = "whole-paper") {
+  await getPool().query(`INSERT INTO worker_heartbeats (name, last_seen_at) VALUES ($1, now())
+    ON CONFLICT (name) DO UPDATE SET last_seen_at = now()`, [name]);
+}
+
+async function isWorkerHeartbeatFresh(name = "whole-paper") {
+  const result = await getPool().query(
+    `SELECT last_seen_at > now() - interval '90 seconds' AS fresh FROM worker_heartbeats WHERE name = $1`,
+    [name]);
+  return Boolean(result.rows[0]?.fresh);
+}
+
 async function recoverWholePaperJobs() {
   return deskTransaction(async (client) => {
     const batches = await client.query(`SELECT b.id FROM scan_batches b WHERE b.desk_managed AND EXISTS (
@@ -3923,7 +3935,7 @@ module.exports = {
   createDeskExam, captureDeskPage, confirmDeskPages, updateDeskQuestions, startDeskGrading, retryDeskGrading,
   listDeskAssignments, getDeskDetail, getDeskImage, assertLegacyMutationAllowed,
   recoverWholePaperJobs, claimWholePaperJob, renewWholePaperLease, getWholePaperJobPayload,
-  completeWholePaperJob, failWholePaperJob,
+  completeWholePaperJob, failWholePaperJob, touchWorkerHeartbeat, isWorkerHeartbeatFresh,
   assertBatchOwnership,
   assertClassOwnership,
   assertExamOwnership,

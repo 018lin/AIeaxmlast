@@ -301,3 +301,8 @@ ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS teacher_comment text NOT NU
 -- One whole-paper job owns several results. Existing crop job uniqueness is subsumed.
 ALTER TABLE grading_results DROP CONSTRAINT IF EXISTS grading_results_job_id_key;
 CREATE UNIQUE INDEX IF NOT EXISTS grading_results_job_question_idx ON grading_results (job_id, question_id);
+
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+  name text PRIMARY KEY,
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);

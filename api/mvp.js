@@ -9,6 +9,12 @@ module.exports = async function handler(request, response) {
     request,
     response,
     query: request.query || {},
-    workerAvailable: () => process.env.WORKER_EXTERNAL === "true",
+    workerAvailable: async () => {
+      try {
+        return await db.isWorkerHeartbeatFresh();
+      } catch {
+        return false;
+      }
+    },
   });
 };

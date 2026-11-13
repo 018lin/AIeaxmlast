@@ -3,9 +3,20 @@ const { createWholePaperWorker } = require("./lib/whole-paper-worker");
 
 const worker = createWholePaperWorker({ db });
 
+async function heartbeat() {
+  try {
+    if (!worker.isAvailable()) return;
+    await db.touchWorkerHeartbeat();
+  } catch (error) {
+    console.error(`[worker] heartbeat failed: ${error.message}`);
+  }
+}
+
 db.initDatabase()
   .then(() => {
     worker.start();
+    heartbeat();
+    setInterval(heartbeat, 20000).unref();
     console.log(`[worker] started, pid=${process.pid}`);
   })
   .catch((error) => {
