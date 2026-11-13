@@ -199,6 +199,30 @@ test("question changes cannot alter a started assignment", async () => {
   await assert.rejects(mock.db.updateDeskQuestions({ examId, questions }, "teacher-A"), { statusCode: 409 }); mock.check();
 });
 
+test("manual review saves the final score, teacher comment and clears the review flag", async () => {
+  const mock = loadDb([recordStep(), rowStep(/FROM grading_results r.*q.question_no = \$4/, [{ id: id(30), max_score: "5" }]),
+    { match: /UPDATE grading_results SET final_score/, run: (v) => { assert.deepEqual(v.slice(1), [4.5, "订正"]); return []; } },
+    rowStep(/UPDATE scan_batches b SET status = CASE/),
+  ]);
+  assert.deepEqual(await mock.db.updateDeskResult({ examId, studentId, questionNo: "1", score: 4.5, comment: " 订正 " }, "teacher-A"), {});
+  assert.equal(mock.queries.at(-1).sql, "COMMIT"); mock.check();
+});
+
+test("manual review rejects over-max scores and missing results without writing", async () => {
+  const over = loadDb([recordStep(), rowStep(/FROM grading_results r/, [{ id: id(30), max_score: "5" }])]);
+  await assert.rejects(over.db.updateDeskResult({ examId, studentId, questionNo: "1", score: 6 }, "teacher-A"), { statusCode: 400 });
+  assert.ok(!over.queries.some((q) => /UPDATE grading_results/.test(q.sql))); over.check();
+  const missing = loadDb([recordStep(), rowStep(/FROM grading_results r/, [])]);
+  await assert.rejects(missing.db.updateDeskResult({ examId, studentId, questionNo: "9", score: 1 }, "teacher-A"), { statusCode: 409 });
+  missing.check();
+});
+
+test("manual review cannot touch another teacher's assignment", async () => {
+  const mock = loadDb([{ match: /e.teacher_account = \$2 AND e.desk_managed/, run: (v) => { assert.equal(v[1], "teacher-B"); return []; } }]);
+  await assert.rejects(mock.db.updateDeskResult({ examId, studentId, questionNo: "1", score: 1 }, "teacher-B"), { statusCode: 403 });
+  mock.check();
+});
+
 test("retry updates only failed jobs with attempts below three and settles batch", async () => {
   const mock = loadDb([recordStep(record({ grading_started_at: new Date() })),
     { match: /status = 'failed' AND attempts < \$2/, run: (v, sql) => {
@@ -352,13 +376,13 @@ test("desk detail is a consistent metadata-only snapshot with short result field
   const mock = loadDb([recordStep(),
     rowStep(/FROM scanned_pages p LEFT JOIN grading_jobs/, [{ id: pageId, student_id: studentId, capture_order: 0, status: "done", error: "" }]),
     rowStep(/SELECT id, question_no, max_score, title/, questionRows),
-    rowStep(/SELECT r\.\*, q.question_no/, [{ student_id: studentId, question_no: "1", final_score: null, score: "4", max_score: "5", analysis: "Good", suggestions: [], ai_result: { knowledge_points: ["Math"], bbox: [0.1, 0.2, 0.3, 0.4] }, needs_review: true }]),
+    rowStep(/SELECT r\.\*, q.question_no/, [{ id: id(20), student_id: studentId, question_no: "1", final_score: null, score: "4", max_score: "5", analysis: "Good", suggestions: [], ai_result: { knowledge_points: ["Math"], bbox: [0.1, 0.2, 0.3, 0.4] }, needs_review: true, reviewed: false, teacher_comment: "" }]),
   ]);
   const detail = await mock.db.getDeskDetail(examId, "teacher-A");
   assert.deepEqual(Object.keys(detail), ["exam", "batch", "students", "pages", "questions", "results"]);
   assert.deepEqual(detail.students, record().student_order_snapshot);
   assert.deepEqual(detail.pages[0], { id: pageId, studentId, captureOrder: 0, status: "done", error: "" });
-  assert.deepEqual(detail.results[0], { studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, bbox: [0.1, 0.2, 0.3, 0.4] });
+  assert.deepEqual(detail.results[0], { id: id(20), studentId, questionNo: "1", score: 4, maxScore: 5, analysis: "Good", suggestions: [], knowledgePoints: ["Math"], needsReview: true, reviewed: false, teacherComment: "", bbox: [0.1, 0.2, 0.3, 0.4] });
   assert.equal(mock.queries[0].sql, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"); mock.check();
 });
 

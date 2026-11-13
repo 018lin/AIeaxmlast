@@ -17,7 +17,7 @@ async function request(action, { db = {}, method = "POST", payload = {}, account
 }
 
 test("authentication is required before any desk operation", async () => {
-  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-answer-image", "desk-create", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions"]) {
+  for (const action of ["desk-list", "desk-detail", "desk-image", "desk-answer-image", "desk-create", "desk-capture", "desk-confirm", "desk-start", "desk-retry", "desk-questions", "desk-result"]) {
     assert.equal((await request(action, { account: "" })).status, 401);
   }
 });
@@ -45,7 +45,7 @@ test("desk-create delegates AI recognition and returns only examId/batchId", asy
 });
 
 test("desk writes preserve empty success response and authenticated account", async () => {
-  const actions = { "desk-capture": "captureDeskPage", "desk-confirm": "confirmDeskPages", "desk-start": "startDeskGrading", "desk-retry": "retryDeskGrading", "desk-questions": "updateDeskQuestions" };
+  const actions = { "desk-capture": "captureDeskPage", "desk-confirm": "confirmDeskPages", "desk-start": "startDeskGrading", "desk-retry": "retryDeskGrading", "desk-questions": "updateDeskQuestions", "desk-result": "updateDeskResult" };
   for (const [action, method] of Object.entries(actions)) {
     const payload = { examId: "exam" };
     const result = await request(action, { payload, workerAvailable: () => true, db: { [method]: async (value, account) => {

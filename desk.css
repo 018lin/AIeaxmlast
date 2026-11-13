@@ -1367,6 +1367,52 @@ input[type="date"] {
   letter-spacing: 0;
 }
 
+.review-form {
+  display: grid;
+  grid-template-columns: minmax(80px, 96px) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.review-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.review-field > span {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.review-field input {
+  min-height: 38px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.review-form button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #f6c4a4;
+  border-radius: 10px;
+  color: var(--brand-strong);
+  background: var(--brand-soft);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.review-form button:disabled {
+  opacity: .55;
+}
+
 /* ---------- notices ---------- */
 
 #notice {
@@ -2029,6 +2075,15 @@ body.is-busy {
   .result-question p {
     font-size: 13px;
     line-height: 1.65;
+  }
+
+  .review-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  }
+
+  .review-form button {
+    grid-column: 1 / -1;
+    min-height: 42px;
   }
 
   #notice {

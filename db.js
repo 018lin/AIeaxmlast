@@ -3693,6 +3693,32 @@ async function updateDeskQuestions(payload, account) {
   });
 }
 
+async function updateDeskResult(payload, account) {
+  const studentId = deskId(payload.studentId, "学生ID");
+  const questionNo = typeof payload.questionNo === "string" ? payload.questionNo.trim() : "";
+  if (!questionNo || questionNo.length > 64) throw deskError("题号无效。");
+  const score = Number(payload.score);
+  if (payload.score === "" || payload.score === null || !Number.isFinite(score) || score < 0) {
+    throw deskError("得分必须为不小于 0 的数字。");
+  }
+  const comment = typeof payload.comment === "string" ? payload.comment.trim() : "";
+  if (comment.length > 500) throw deskError("教师评语不能超过 500 字。");
+  return deskTransaction(async (client) => {
+    const record = await deskRecord(client, payload.examId, account, true);
+    const result = await client.query(`SELECT r.id, r.max_score FROM grading_results r
+      JOIN exam_questions q ON q.id = r.question_id
+      WHERE r.batch_id = $1 AND r.student_id = $2 AND q.exam_id = $3 AND q.question_no = $4
+      ORDER BY r.created_at DESC LIMIT 1`, [record.batch_id, studentId, record.exam_id, questionNo]);
+    if (!result.rowCount) throw deskError("该题还没有批改结果，暂时不能修改得分。", 409);
+    const maxScore = Number(result.rows[0].max_score);
+    if (score > maxScore + 0.0001) throw deskError(`得分不能超过该题满分 ${maxScore} 分。`);
+    await client.query(`UPDATE grading_results SET final_score = $2, needs_review = false,
+      reviewed = true, teacher_comment = $3 WHERE id = $1`, [result.rows[0].id, score, comment]);
+    await settleDeskBatch(client, record.batch_id);
+    return {};
+  });
+}
+
 async function startDeskGrading(payload, account) {
   return deskTransaction(async (client) => {
     const record = await deskRecord(client, payload.examId, account, true);
@@ -3773,10 +3799,10 @@ async function getDeskDetail(examId, account) {
       JOIN exam_questions q ON q.id = r.question_id WHERE r.batch_id = $1 ORDER BY q.created_at, q.question_no`, [record.batch_id]);
     const mappedResults = results.rows.map((r) => {
       const score = r.final_score ?? r.score;
-      return { studentId: r.student_id, questionNo: r.question_no,
+      return { id: r.id, studentId: r.student_id, questionNo: r.question_no,
         score: score === null || score === undefined ? null : Number(score), maxScore: Number(r.max_score), analysis: r.analysis,
         suggestions: asJsonArray(r.suggestions), knowledgePoints: asJsonArray(r.ai_result?.knowledge_points), needsReview: r.needs_review,
-        bbox: deskResultBBox(r.ai_result?.bbox) };
+        reviewed: r.reviewed, teacherComment: r.teacher_comment || "", bbox: deskResultBBox(r.ai_result?.bbox) };
     });
     const safeByStudent = new Map();
     for (const result of mappedResults) {
@@ -3991,7 +4017,7 @@ async function failWholePaperJob(job, message) {
 }
 
 module.exports = {
-  createDeskExam, captureDeskPage, confirmDeskPages, updateDeskQuestions, startDeskGrading, retryDeskGrading,
+  createDeskExam, captureDeskPage, confirmDeskPages, updateDeskQuestions, updateDeskResult, startDeskGrading, retryDeskGrading,
   listDeskAssignments, getDeskDetail, getDeskImage, getDeskAnswerImage, assertLegacyMutationAllowed,
   recoverWholePaperJobs, claimWholePaperJob, renewWholePaperLease, getWholePaperJobPayload,
   completeWholePaperJob, failWholePaperJob, touchWorkerHeartbeat, isWorkerHeartbeatFresh,

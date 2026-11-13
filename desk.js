@@ -202,12 +202,36 @@
     paper.loading = false;
     renderPaperStage();
   }
+  function studentScore(studentId) {
+    const results = resultsFor(studentId);
+    return {
+      total: results.reduce((sum, r) => sum + Number(r.score ?? 0), 0),
+      max: results.reduce((sum, r) => sum + Number(r.maxScore), 0),
+      scored: results.filter(r => r.score != null).length,
+    };
+  }
+  function reviewForm(r) {
+    return `<form class="review-form" data-question="${esc(r.questionNo)}"><label class="review-field"><span>得分</span><input name="score" type="number" inputmode="decimal" min="0" max="${Number(r.maxScore)}" step="any" required value="${r.score == null ? '' : Number(r.score)}" aria-label="第 ${esc(r.questionNo)} 题得分"></label><label class="review-field grow"><span>教师评语</span><input name="comment" maxlength="500" placeholder="选填，补充说明" value="${esc(r.teacherComment || '')}" aria-label="第 ${esc(r.questionNo)} 题教师评语"></label><button type="submit">保存复核</button></form>`;
+  }
+  function resultListHtml(studentId) {
+    return resultsFor(studentId).map(r => `<section class="result-question" data-question="${esc(r.questionNo)}"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : r.reviewed ? '<span class="badge good">已复核</span>' : ''}</span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small>${reviewForm(r)}</section>`).join('') || '<p class="empty">还没有批改结果。</p>';
+  }
+  function renderStudentResults(studentId) {
+    const list = app.querySelector('.result-list');
+    if (list) list.innerHTML = resultListHtml(studentId);
+    const score = app.querySelector('.heading .score');
+    if (score) {
+      const { total, max, scored } = studentScore(studentId);
+      score.innerHTML = `${scored ? total : '—'}<small> / ${max}</small>`;
+    }
+    renderPaperStage();
+  }
   function renderStudent(id) {
     const d = state.detail, student = d.students.find(s=>s.id===id);
     if (!student) throw new Error('名单快照中没有该学生。');
-    const results = resultsFor(id), total = results.reduce((sum,r)=>sum+Number(r.score ?? 0),0), max = results.reduce((sum,r)=>sum+Number(r.maxScore),0), scored = results.filter(r=>r.score != null).length;
+    const { total, max, scored } = studentScore(id);
     state.paper = { studentId:id, mode:'student', student:'', answer:'', loading:true };
-    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><span class="score">${scored ? total : '—'}<small> / ${max}</small></span></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}</div><div class="result-list">${results.map(r=>`<section class="result-question"><header><h2>第 ${esc(r.questionNo)} 题</h2><span>${r.score == null ? '—' : Number(r.score)} / ${Number(r.maxScore)} 分 ${r.needsReview ? '<span class="badge warning">待复核</span>' : ''}</span></header><p>${esc(r.analysis || '暂无评语')}</p>${(r.suggestions || []).map(s=>`<p class="muted">${esc(s)}</p>`).join('')}<small>${r.score != null && Number(r.score) < Number(r.maxScore) ? '需巩固：' : '知识点：'}${esc((r.knowledgePoints || []).join('、') || '未标注')}</small></section>`).join('') || '<p class="empty">还没有批改结果。</p>'}</div>`;
+    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><span class="score">${scored ? total : '—'}<small> / ${max}</small></span></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}</div><div class="result-list">${resultListHtml(id)}</div>`;
   }
   async function renderCapture(requestedId, token) {
     const d = state.detail;
@@ -362,6 +386,18 @@
     event.preventDefault(); const form=event.target;
     const fields=new FormData(form);
     busyWork(async()=>{
+      if(form.classList.contains('review-form')) {
+        const studentId = state.paper?.studentId;
+        if(!studentId) throw new Error('请返回重新打开学生详情。');
+        const questionNo = form.dataset.question, score = Number(form.querySelector('[name=score]').value), comment = form.querySelector('[name=comment]').value.trim();
+        if(!Number.isFinite(score)) throw new Error('请输入有效的得分。');
+        await api('desk-result',{examId:state.detail.exam.id,studentId,questionNo,score,comment});
+        const result = resultsFor(studentId).find(r=>r.questionNo===questionNo);
+        if(result) { result.score=score; result.needsReview=false; result.reviewed=true; result.teacherComment=comment; }
+        renderStudentResults(studentId);
+        message(`第 ${questionNo} 题已保存复核结果。`);
+        return;
+      }
       if(form.id==='createForm') {
         if(!state.answer) throw new Error('请先选择一张清晰的标准答案图片。');
         startBusy();
