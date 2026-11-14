@@ -409,6 +409,20 @@ main {
   margin-bottom: 0;
 }
 
+.heading-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.heading-side .report-button {
+  min-height: 34px;
+  padding: 0 13px;
+  font-size: 13px;
+}
+
 .heading .score {
   color: var(--ink);
   font-size: 30px;
@@ -1713,6 +1727,43 @@ dialog img {
   background: var(--surface-2);
 }
 
+/* ---------- report preview (iOS) ---------- */
+
+#reportDialog {
+  width: min(94vw, 560px);
+}
+
+.report-dialog-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.report-dialog-bar > * {
+  flex: 1;
+  min-height: 40px;
+}
+
+#reportImage {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  background: #ffffff;
+}
+
+.report-dialog-hint {
+  margin: 0;
+  padding: 10px 12px 14px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
 /* ---------- full-screen progress ---------- */
 
 body.is-busy {
@@ -2124,6 +2175,16 @@ body.is-busy {
 
   .heading .score {
     font-size: 26px;
+  }
+
+  .heading-side {
+    gap: 6px;
+  }
+
+  .heading-side .report-button {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 12.5px;
   }
 
   .summary-strip {

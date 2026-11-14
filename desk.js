@@ -289,9 +289,298 @@
     const d = state.detail, student = d.students.find(s=>s.id===id);
     if (!student) throw new Error('名单快照中没有该学生。');
     const { total, max, scored } = studentScore(id);
+    const ready = isDone(id) && resultsFor(id).length > 0;
     state.paper = { studentId:id, mode:'student', student:'', answer:'', loading:true };
-    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><span class="score">${scored ? total : '—'}<small> / ${max}</small></span></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}${resultsFor(id).some(isContested) ? `<button data-action="contested" aria-pressed="${state.contestedOnly}" class="${state.contestedOnly ? 'is-active' : ''}">${contestedLabel(id)}</button>` : ''}</div><div class="result-list">${resultListHtml(id)}</div>`;
+    app.innerHTML = `${back('返回班级结果', `#results/${esc(d.exam.id)}`)}<div class="heading"><div><h1>${esc(student.name)}</h1><p>学号 ${esc(student.studentNo)} · ${esc(d.exam.name)}</p></div><div class="heading-side">${ready ? `<button type="button" class="report-button" data-action="report" data-student="${esc(id)}">生成报告</button>` : ''}<span class="score">${scored ? total : '—'}<small> / ${max}</small></span></div></div><section class="paper-viewer" aria-label="原卷与标注"><div class="paper-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-action="paper" data-mode="student" class="is-active">学生答卷</button><button type="button" role="tab" aria-selected="false" data-action="paper" data-mode="answer">标准答案</button></div><div class="paper-stage" id="paperStage"><p class="paper-note">正在加载答卷…</p></div><p class="paper-hint" id="paperHint"></p></section><div class="actions result-actions">${pageFor(id) ? `<button data-action="photo" data-student="${esc(id)}">查看作业照片</button>` : ''}${resultsFor(id).some(isContested) ? `<button data-action="contested" aria-pressed="${state.contestedOnly}" class="${state.contestedOnly ? 'is-active' : ''}">${contestedLabel(id)}</button>` : ''}</div><div class="result-list">${resultListHtml(id)}</div>`;
   }
+
+  // ---------- long-image student report ----------
+
+  const REPORT_WIDTH = 750;
+  const REPORT_PAD = 44;
+  const REPORT_BANNER = 150;
+  const REPORT_FONT = '"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Noto Sans SC",system-ui,-apple-system,sans-serif';
+  const REPORT_COLOR = { ink:'#101828', soft:'#344054', muted:'#667085', faint:'#98a2b3', line:'#e4e7ec', brand:'#ff6a16', good:'#12b76a', warn:'#f79009', bad:'#f04438' };
+  const reportFont = (size, weight = 400) => `${weight} ${size}px ${REPORT_FONT}`;
+  const isIOSDevice = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let reportPreviewUrl = '';
+
+  function wrapReportText(ctx, text, maxWidth) {
+    const lines = [];
+    for (const paragraph of String(text ?? '').split('\n')) {
+      if (!paragraph.trim()) { lines.push(''); continue; }
+      const tokens = paragraph.match(/[\u2E80-\u9FFF\u3000-\u303F\uFF00-\uFFEF]|[^\s\u2E80-\u9FFF\u3000-\u303F\uFF00-\uFFEF]+|\s+/g) || [paragraph];
+      let line = '';
+      for (const token of tokens) {
+        if (!token.trim()) { if (line) line += ' '; continue; }
+        if (!line || ctx.measureText(line + token).width <= maxWidth) { line += token; continue; }
+        lines.push(line.trimEnd());
+        line = token.trimStart();
+        while (line && ctx.measureText(line).width > maxWidth) {
+          let cut = line.length - 1;
+          while (cut > 1 && ctx.measureText(line.slice(0, cut)).width > maxWidth) cut -= 1;
+          lines.push(line.slice(0, cut));
+          line = line.slice(cut);
+        }
+      }
+      lines.push(line.trimEnd());
+    }
+    return lines.length ? lines : [''];
+  }
+  const reportScore = value => value == null ? '—' : String(Math.round(Number(value) * 100) / 100);
+  function reportRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function reportText(ctx, text, x, y, { size = 14, weight = 400, color = REPORT_COLOR.ink, align = 'left' } = {}) {
+    ctx.font = reportFont(size, weight);
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'top';
+    ctx.fillText(text, x, y);
+  }
+
+  function buildReportModel(studentId) {
+    const d = state.detail;
+    const student = d.students.find(s => s.id === studentId);
+    if (!student) throw new Error('名单中找不到该学生。');
+    const results = resultsFor(studentId);
+    const { total, max, scored } = studentScore(studentId);
+    const contentWidth = REPORT_WIDTH - REPORT_PAD * 2;
+    const innerWidth = contentWidth - 40;
+    const measure = document.createElement('canvas').getContext('2d');
+
+    const points = new Map();
+    for (const result of results) {
+      for (const name of result.knowledgePoints || []) {
+        if (!name) continue;
+        const entry = points.get(name) || { name, score: 0, max: 0 };
+        entry.score += Number(result.score ?? 0);
+        entry.max += Number(result.maxScore) || 0;
+        points.set(name, entry);
+      }
+    }
+    const knowledge = [...points.values()]
+      .map(item => ({ ...item, rate: item.max ? item.score / item.max : 0 }))
+      .sort((a, b) => a.rate - b.rate);
+
+    const cards = results.map(result => {
+      const lines = [];
+      const push = (text, size, weight, color, lh) => {
+        measure.font = reportFont(size, weight);
+        for (const line of wrapReportText(measure, text, innerWidth)) lines.push({ text: line, size, weight, color, lh });
+      };
+      if (result.teacherComment) push(`教师评语：${result.teacherComment}`, 14, 500, REPORT_COLOR.ink, 24);
+      if (result.analysis) push(result.analysis, 14, 400, REPORT_COLOR.soft, 24);
+      if (!result.teacherComment && !result.analysis) push('暂无评语', 14, 400, REPORT_COLOR.muted, 24);
+      for (const suggestion of result.suggestions || []) push(`建议：${suggestion}`, 13.5, 400, REPORT_COLOR.muted, 22);
+      const pointsText = (result.knowledgePoints || []).join('、');
+      if (pointsText) push(`知识点：${pointsText}`, 12.5, 400, REPORT_COLOR.faint, 21);
+      return { result, lines, height: 20 + 26 + 8 + lines.reduce((sum, line) => sum + line.lh, 0) + 20 };
+    });
+
+    return { student, results, total, max, scored, knowledge, cards, contentWidth, innerWidth };
+  }
+
+  // measure 与 draw 两遍走同一套布局，保证画布高度与内容完全对齐。
+  function paintReport(ctx, model, draw) {
+    const { student, results, total, max, scored, knowledge, cards, contentWidth } = model;
+    const t = (text, x, y, options) => { if (draw) reportText(ctx, text, x, y, options); };
+    let y = 0;
+
+    if (draw) {
+      const banner = ctx.createLinearGradient(0, 0, REPORT_WIDTH, REPORT_BANNER);
+      banner.addColorStop(0, '#ff6a16');
+      banner.addColorStop(1, '#ff9448');
+      ctx.fillStyle = banner;
+      ctx.fillRect(0, 0, REPORT_WIDTH, REPORT_BANNER);
+      ctx.save();
+      ctx.globalAlpha = .14;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(REPORT_WIDTH - 80, 26, 120, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(REPORT_WIDTH - 190, 168, 64, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    t('智能批改 · 学习诊断', REPORT_PAD, 28, { size: 13, weight: 600, color: 'rgba(255,255,255,.86)' });
+    t('学情报告', REPORT_PAD, 50, { size: 32, weight: 700, color: '#ffffff' });
+    t(`作业：${state.detail.exam.name}`, REPORT_PAD, 102, { size: 14, weight: 500, color: 'rgba(255,255,255,.92)' });
+    t('AI数智作业平台', REPORT_WIDTH - REPORT_PAD, 30, { size: 13, weight: 500, color: 'rgba(255,255,255,.85)', align: 'right' });
+
+    y = REPORT_BANNER + 28;
+    if (draw) {
+      reportRect(ctx, REPORT_PAD, y, contentWidth, 122, 18);
+      ctx.fillStyle = '#fafbfc';
+      ctx.fill();
+      ctx.strokeStyle = REPORT_COLOR.line;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    t(student.name, REPORT_PAD + 24, y + 20, { size: 26, weight: 700 });
+    t(`学号 ${student.studentNo || '—'}`, REPORT_PAD + 24, y + 58, { size: 13.5, color: REPORT_COLOR.muted });
+    t(`满分 ${reportScore(max)} 分 · 共 ${results.length} 题`, REPORT_PAD + 24, y + 80, { size: 13.5, color: REPORT_COLOR.muted });
+    if (draw) {
+      const scoreValue = results.some(result => result.score != null) ? String(Math.round(total * 100) / 100) : '—';
+      ctx.font = reportFont(46, 700);
+      const bigWidth = ctx.measureText(scoreValue).width;
+      const suffix = ` / ${reportScore(max)} 分`;
+      ctx.font = reportFont(15, 600);
+      const suffixWidth = ctx.measureText(suffix).width;
+      const startX = REPORT_PAD + contentWidth - 24 - bigWidth - suffixWidth;
+      reportText(ctx, scoreValue, startX, y + 16, { size: 46, weight: 700, color: REPORT_COLOR.brand });
+      reportText(ctx, suffix, startX + bigWidth, y + 45, { size: 15, weight: 600, color: REPORT_COLOR.muted });
+      const rateText = `得分率 ${max ? Math.round(total / max * 1000) / 10 : 0}% · 已批改 ${scored}/${results.length} 题`;
+      reportText(ctx, rateText, REPORT_PAD + contentWidth - 24, y + 84, { size: 12.5, color: REPORT_COLOR.muted, align: 'right' });
+    }
+
+    y += 122 + 30;
+    if (draw) {
+      reportRect(ctx, REPORT_PAD, y + 2, 4, 18, 2);
+      ctx.fillStyle = REPORT_COLOR.brand;
+      ctx.fill();
+    }
+    t('知识点分析', REPORT_PAD + 14, y, { size: 18, weight: 700 });
+    y += 40;
+    if (!knowledge.length) {
+      t('本次批改未标注知识点。', REPORT_PAD, y, { size: 13.5, color: REPORT_COLOR.muted });
+      y += 30;
+    } else {
+      for (const item of knowledge) {
+        const rate = Math.max(0, Math.min(1, item.rate));
+        const tone = rate < .6 ? REPORT_COLOR.bad : rate < .85 ? REPORT_COLOR.warn : REPORT_COLOR.good;
+        t(item.name, REPORT_PAD, y, { size: 14, weight: 500, color: REPORT_COLOR.soft });
+        t(`${reportScore(item.score)} / ${reportScore(item.max)} 分 · ${Math.round(rate * 100)}%`, REPORT_PAD + contentWidth, y + 1, { size: 12.5, weight: 600, color: tone, align: 'right' });
+        if (draw) {
+          reportRect(ctx, REPORT_PAD, y + 28, contentWidth, 6, 3);
+          ctx.fillStyle = '#eef1f4';
+          ctx.fill();
+          if (rate > 0) {
+            reportRect(ctx, REPORT_PAD, y + 28, Math.max(4, contentWidth * rate), 6, 3);
+            ctx.fillStyle = tone;
+            ctx.fill();
+          }
+        }
+        y += 58;
+      }
+    }
+
+    y += 30;
+    if (draw) {
+      reportRect(ctx, REPORT_PAD, y + 2, 4, 18, 2);
+      ctx.fillStyle = REPORT_COLOR.brand;
+      ctx.fill();
+    }
+    t('逐题评语', REPORT_PAD + 14, y, { size: 18, weight: 700 });
+    y += 40;
+    for (const card of cards) {
+      const result = card.result;
+      if (draw) {
+        reportRect(ctx, REPORT_PAD, y, contentWidth, card.height, 14);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = REPORT_COLOR.line;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      t(`第 ${result.questionNo} 题`, REPORT_PAD + 20, y + 20, { size: 16, weight: 700 });
+      if (draw) {
+        const scoreText = `${result.score == null ? '—' : reportScore(result.score)} / ${reportScore(result.maxScore)} 分`;
+        ctx.font = reportFont(15, 700);
+        const scoreWidth = ctx.measureText(scoreText).width;
+        const scoreRight = REPORT_PAD + contentWidth - 20;
+        reportText(ctx, scoreText, scoreRight, y + 21, { size: 15, weight: 700, color: REPORT_COLOR.ink, align: 'right' });
+        if (result.needsReview) {
+          const badgeText = '待复核';
+          ctx.font = reportFont(11.5, 600);
+          const badgeWidth = ctx.measureText(badgeText).width + 16;
+          const badgeX = scoreRight - scoreWidth - 10 - badgeWidth;
+          reportRect(ctx, badgeX, y + 19, badgeWidth, 21, 10.5);
+          ctx.fillStyle = '#fffaeb';
+          ctx.fill();
+          reportText(ctx, badgeText, badgeX + 8, y + 23, { size: 11.5, weight: 600, color: '#b54708' });
+        }
+      }
+      let lineY = y + 54;
+      for (const line of card.lines) {
+        t(line.text, REPORT_PAD + 20, lineY, { size: line.size, weight: line.weight, color: line.color });
+        lineY += line.lh;
+      }
+      y += card.height + 14;
+    }
+
+    y += 12;
+    if (draw) {
+      ctx.fillStyle = REPORT_COLOR.line;
+      ctx.fillRect(REPORT_PAD, y, contentWidth, 1);
+    }
+    y += 20;
+    const today = new Date();
+    const dateText = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')}`;
+    t('AI数智作业平台 · 学情报告', REPORT_PAD, y, { size: 12.5, weight: 500, color: REPORT_COLOR.faint });
+    t(dateText, REPORT_PAD + contentWidth, y, { size: 12.5, color: REPORT_COLOR.faint, align: 'right' });
+    y += 22;
+    t('本报告由 AI 辅助生成，仅供教学参考。', REPORT_PAD, y, { size: 12, color: REPORT_COLOR.faint });
+    return y + 18 + 34;
+  }
+
+  function openReportPreview(url, filename) {
+    const dialog = document.querySelector('#reportDialog');
+    if (!dialog) {
+      const link = document.createElement('a');
+      link.href = url; link.download = filename; link.click();
+      return;
+    }
+    if (reportPreviewUrl) URL.revokeObjectURL(reportPreviewUrl);
+    reportPreviewUrl = url;
+    document.querySelector('#reportImage').src = url;
+    const save = document.querySelector('#saveReport');
+    save.href = url;
+    save.download = filename;
+    dialog.showModal();
+  }
+
+  async function generateStudentReport(studentId, button) {
+    if (!studentId) return;
+    button.disabled = true;
+    message('正在生成学情报告…');
+    try {
+      const model = buildReportModel(studentId);
+      const height = Math.ceil(paintReport(document.createElement('canvas').getContext('2d'), model, false));
+      const scale = Math.max(1, Math.min(2, Math.floor(Math.sqrt(15000000 / (REPORT_WIDTH * height)) * 10) / 10));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(REPORT_WIDTH * scale);
+      canvas.height = Math.round(height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(scale, scale);
+      paintReport(ctx, model, true);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('报告生成失败，请重试。');
+      const url = URL.createObjectURL(blob);
+      const filename = `${model.student.name}-${state.detail.exam.name}-学情报告.png`.replace(/[\\/:*?"<>|]+/g, '-');
+      if (isIOSDevice()) {
+        openReportPreview(url, filename);
+        message('报告已生成，可长按图片保存。');
+      } else {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        message('学情报告已生成，请在下载中查看。');
+      }
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function renderCapture(requestedId, token) {
     const d = state.detail;
     if (!editable()) { go('results',d.exam.id); return; }
@@ -540,6 +829,7 @@
     if(action==='refresh') return navigate();
     if(action==='capture-one') return go('capture',state.detail.exam.id,button.dataset.student);
     if(action==='paper') return setPaperMode(button.dataset.mode);
+    if(action==='report') { generateStudentReport(button.dataset.student, button).catch(error => message(error.message)); return; }
     if(action==='gallery') { state.fileTarget={...state.photoTarget, route:state.route}; fileInput.value=''; fileInput.click(); return; }
     if(action==='skip') { const i=state.detail.students.findIndex(s=>s.id===state.photoTarget.studentId); const next=state.detail.students[i+1]; go(next?'capture':'review',state.detail.exam.id,next?.id); return; }
     if(action==='delete-question') { button.closest('.question-row').remove(); markQuestionsDirty(); return; }
@@ -646,6 +936,11 @@
     card.classList.toggle('is-open');
   });
   document.querySelector('#closePhoto').onclick=()=>document.querySelector('#photoDialog').close();
+  document.querySelector('#closeReport').onclick=()=>document.querySelector('#reportDialog').close();
+  document.querySelector('#reportDialog').addEventListener('close',()=>{
+    document.querySelector('#reportImage').removeAttribute('src');
+    if(reportPreviewUrl) { URL.revokeObjectURL(reportPreviewUrl); reportPreviewUrl=''; }
+  });
   let holdTimer;
   app.addEventListener('pointerdown', event => {
     const image = event.target.closest('[data-thumb]');
